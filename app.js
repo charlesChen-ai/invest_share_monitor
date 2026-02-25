@@ -45,8 +45,8 @@ function createFallbackLedgerStorage() {
     const now = new Date().toISOString();
     return {
       members: [
-        { name: "曾", principal: 31573 },
-        { name: "陈", principal: 145182 },
+        { name: "成员一", principal: 31573 },
+        { name: "成员二", principal: 145182 },
       ],
       currentTotalAsset: 176754.95,
       cashAmount: 4122.55,
@@ -104,6 +104,10 @@ function createFallbackLedgerStorage() {
     }
   };
 
+  const loadCloudState = async () => null;
+  const saveCloudState = async () => false;
+  const isCloudEnabled = () => false;
+
   const addLog = (state, { type, detail, at }) => {
     state.logs = [
       { id: uid(), at: at || new Date().toISOString(), type, detail },
@@ -152,7 +156,20 @@ function createFallbackLedgerStorage() {
     return true;
   };
 
-  return { uid, number, dateKeyOf, normalizeHolding, loadState, saveState, addLog, ensureTodayBaseline, pushSnapshot };
+  return {
+    uid,
+    number,
+    dateKeyOf,
+    normalizeHolding,
+    loadState,
+    loadCloudState,
+    saveState,
+    saveCloudState,
+    addLog,
+    ensureTodayBaseline,
+    pushSnapshot,
+    isCloudEnabled,
+  };
 }
 
 const REQUIRED_STORAGE_APIS = [
@@ -176,8 +193,20 @@ if (!hasValidStorageApi) {
   window.LedgerStorage = createFallbackLedgerStorage();
 }
 
-const { uid, number, dateKeyOf, normalizeHolding, loadState, saveState, addLog, ensureTodayBaseline, pushSnapshot } =
-  window.LedgerStorage;
+const {
+  uid,
+  number,
+  dateKeyOf,
+  normalizeHolding,
+  loadState,
+  loadCloudState = async () => null,
+  saveState,
+  saveCloudState = async () => false,
+  addLog,
+  ensureTodayBaseline,
+  pushSnapshot,
+  isCloudEnabled = () => false,
+} = window.LedgerStorage;
 
 function round(value, precision = 4) {
   const factor = 10 ** precision;
@@ -199,9 +228,9 @@ function formatUnits(value) {
 }
 
 function formatDate(value) {
-  if (!value) return "未设置";
+  if (!value) return "未记录";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "未设置";
+  if (Number.isNaN(date.getTime())) return "未记录";
   return date.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -230,7 +259,7 @@ function assetTypeText(type) {
   return type === "fund" ? "基金" : "股票";
 }
 
-function ownerText(owner, memberAName = "成员A", memberBName = "成员B") {
+function ownerText(owner, memberAName = "成员一", memberBName = "成员二") {
   if (owner === "memberA") return memberAName;
   if (owner === "memberB") return memberBName;
   return "按本金比例";
@@ -315,11 +344,11 @@ function fetchTencentQuote(symbol) {
 
 function computeSummary(state) {
   const members = Array.isArray(state.members) ? state.members : [];
-  const memberA = members[0] || { name: "成员A", principal: 0 };
-  const memberB = members[1] || { name: "成员B", principal: 0 };
+  const memberA = members[0] || { name: "成员一", principal: 0 };
+  const memberB = members[1] || { name: "成员二", principal: 0 };
 
-  const memberAName = String(memberA.name || "").trim() || "曾";
-  const memberBName = String(memberB.name || "").trim() || "陈";
+  const memberAName = String(memberA.name || "").trim() || "成员一";
+  const memberBName = String(memberB.name || "").trim() || "成员二";
   const principalA = number(memberA.principal);
   const principalB = number(memberB.principal);
   const totalPrincipal = principalA + principalB;
@@ -371,7 +400,7 @@ function computeSummary(state) {
   const currentTotalAsset = stockSnapshotAsset + fundMarketValueTotal;
   const estimatedTotal = holdingMarketValueTotal + cashAmount;
   const gap = currentTotalAsset - estimatedTotal;
-  const netValue = totalPrincipal > 0 ? currentTotalAsset / totalPrincipal : 0;
+  const netValue = totalPrincipal > 0 ? stockSnapshotAsset / totalPrincipal : 0;
   const assetA = netValue * principalA;
   const assetB = netValue * principalB;
   const profitA = assetA - principalA;
@@ -473,7 +502,7 @@ function getTodayProfitBaseline(state, summary) {
 
   if (changed) {
     state.dailyBaselines[key] = baseline;
-    saveState(state);
+    persistState(state);
   }
 
   return baseline;
@@ -486,7 +515,7 @@ function renderHistory(bodyId, logs) {
   body.innerHTML = "";
   if (!logs.length) {
     const row = document.createElement("tr");
-    row.innerHTML = "<td>--</td><td>--</td><td>暂无操作记录</td>";
+    row.innerHTML = "<td>--</td><td>--</td><td>暂无历史记录</td>";
     body.appendChild(row);
     return;
   }
@@ -531,7 +560,7 @@ function renderDashboardHoldings(rows, memberAName, memberBName) {
 
   if (!rows.length) {
     const row = document.createElement("tr");
-    row.innerHTML = '<td colspan="10">暂无持仓</td>';
+    row.innerHTML = '<td colspan="10">暂无持仓数据</td>';
     body.appendChild(row);
     return;
   }
@@ -572,7 +601,7 @@ function renderDashboard(state) {
   setText("current-asset", formatCurrency(summary.currentTotalAsset));
   setText(
     "current-asset-composition-hint",
-    `总资产 = 股票资产快照 ${formatCurrency(summary.stockSnapshotAsset)} + 基金市值 ${formatCurrency(summary.fundMarketValueTotal)}`
+    `总资产口径：股票账户快照 ${formatCurrency(summary.stockSnapshotAsset)} + 基金市值 ${formatCurrency(summary.fundMarketValueTotal)}`
   );
   setText("total-principal-hint", `总本金：${formatCurrency(summary.totalPrincipal)}`);
 
@@ -580,8 +609,8 @@ function renderDashboard(state) {
   const totalProfitBase = summary.stockCostTotal + summary.fundCostTotal;
   const totalProfitRate = totalProfitBase > 0 ? (totalProfit / totalProfitBase) * 100 : 0;
   setText("total-profit-value", formatCurrency(totalProfit));
-  setText("total-profit-rate", `收益率：${totalProfitRate.toFixed(2)}%`);
-  setText("total-profit-line", `总收益：${formatCurrency(totalProfit)}`);
+  setText("total-profit-rate", `累计收益率：${totalProfitRate.toFixed(2)}%`);
+  setText("total-profit-line", `累计收益：${formatCurrency(totalProfit)}`);
   setText(
     "total-profit-formula",
     `股票总收益 ${formatCurrency(summary.stockTotalProfit)} + 基金总收益 ${formatCurrency(summary.fundTotalProfit)} = ${formatCurrency(totalProfit)}`
@@ -593,8 +622,11 @@ function renderDashboard(state) {
   setText("member-a-principal-line", `${summary.memberAName}本金：${formatCurrency(summary.principalA)}`);
   setText("member-b-principal-line", `${summary.memberBName}本金：${formatCurrency(summary.principalB)}`);
 
-  setText("net-value-line", `当前净值：${summary.netValue.toFixed(4)}`);
-  setText("net-value-formula", `${formatCurrency(summary.currentTotalAsset)} ÷ ${formatCurrency(summary.totalPrincipal)} = ${summary.netValue.toFixed(4)}`);
+  setText("net-value-line", `股票账户净值：${summary.netValue.toFixed(4)}`);
+  setText(
+    "net-value-formula",
+    `${formatCurrency(summary.stockSnapshotAsset)} ÷ ${formatCurrency(summary.totalPrincipal)} = ${summary.netValue.toFixed(4)}`
+  );
 
   const allocationBase = summary.displayAssetA + summary.displayAssetB;
   const allocationA = allocationBase > 0 ? (summary.displayAssetA / allocationBase) * 100 : 0;
@@ -602,11 +634,11 @@ function renderDashboard(state) {
   const allocationAFormula =
     allocationBase > 0
       ? `${formatCurrency(summary.displayAssetA)} ÷ ${formatCurrency(allocationBase)} = ${allocationA.toFixed(2)}%`
-      : "总分配资产为 0，占比按 0.00% 处理";
+      : "当前可分配资产为 0，占比按 0.00% 处理";
   const allocationBFormula =
     allocationBase > 0
       ? `${formatCurrency(summary.displayAssetB)} ÷ ${formatCurrency(allocationBase)} = ${allocationB.toFixed(2)}%`
-      : "总分配资产为 0，占比按 0.00% 处理";
+      : "当前可分配资产为 0，占比按 0.00% 处理";
   setText("member-a-asset-line", `${summary.memberAName}资产：${formatCurrency(summary.displayAssetA)} · 占比 ${allocationA.toFixed(2)}%`);
   setText(
     "member-a-asset-formula",
@@ -642,20 +674,20 @@ function renderDashboard(state) {
   if (fundBar) fundBar.style.width = `${Math.max(0, Math.min(100, fundShare)).toFixed(2)}%`;
   if (cashBar) cashBar.style.width = `${Math.max(0, Math.min(100, cashShare)).toFixed(2)}%`;
 
-  setText("structure-profit-badge", `累计收益：${formatCurrency(totalProfit)}`);
+  setText("structure-profit-badge", `累计收益（持仓口径）：${formatCurrency(totalProfit)}`);
   setPositiveNegative(byId("structure-profit-badge"), totalProfit);
   setText(
     "structure-owner-badge",
-    `归属持仓：${summary.memberAName} ${formatCurrency(summary.assignedAssetA)} · ${summary.memberBName} ${formatCurrency(summary.assignedAssetB)}`
+    `归属资产：${summary.memberAName} ${formatCurrency(summary.assignedAssetA)} · ${summary.memberBName} ${formatCurrency(summary.assignedAssetB)}`
   );
 
-  let netState = "净值状态：相对平稳";
+  let netState = "净值状态：平稳";
   if (summary.netValue >= 1.2) {
-    netState = "净值状态：强势增长";
+    netState = "净值状态：显著上行";
   } else if (summary.netValue >= 1.05) {
-    netState = "净值状态：稳步增长";
+    netState = "净值状态：温和上行";
   } else if (summary.netValue < 0.95) {
-    netState = "净值状态：出现回撤";
+    netState = "净值状态：阶段回撤";
   }
   const stateBadge = byId("structure-state-badge");
   setText("structure-state-badge", netState);
@@ -695,10 +727,10 @@ function renderDashboard(state) {
   const todayTotalProfitRate = todayBaseAsset > 0 ? (todayTotalProfit / todayBaseAsset) * 100 : 0;
 
   setText("today-profit-total-value", formatCurrency(todayTotalProfit));
-  setText("today-profit-total-rate", `日内收益率：${todayTotalProfitRate.toFixed(2)}%`);
+  setText("today-profit-total-rate", `当日收益率：${todayTotalProfitRate.toFixed(2)}%`);
   setText("today-profit-a-line", `${summary.memberAName}：${formatCurrency(todayAProfit)}`);
   setText("today-profit-b-line", `${summary.memberBName}：${formatCurrency(todayBProfit)}`);
-  setText("today-profit-base-line", `基准资产：${formatCurrency(todayBaseAsset)}`);
+  setText("today-profit-base-line", `当日基线资产：${formatCurrency(todayBaseAsset)}`);
   setPositiveNegative(byId("today-profit-total-value"), todayTotalProfit);
   setPositiveNegative(byId("today-profit-total-rate"), todayTotalProfitRate);
   setPositiveNegative(byId("today-profit-a-line"), todayAProfit);
@@ -708,8 +740,8 @@ function renderDashboard(state) {
   setText("fund-total-line", `基金市值：${formatCurrency(summary.fundMarketValueTotal)}`);
   setText("cash-line", `持有现金：${formatCurrency(state.cashAmount)}`);
   setText("holding-total-line", `持仓市值合计：${formatCurrency(summary.holdingMarketValueTotal)}`);
-  setText("holding-total-formula", "各资产行 (份额/股数 × 当前净值/市价) 求和");
-  setText("estimated-total-line", `持仓+现金：${formatCurrency(summary.estimatedTotal)}`);
+  setText("holding-total-formula", "按各资产行：份额/股数 × 当前净值/市价，加总得到持仓市值");
+  setText("estimated-total-line", `估算资产合计（持仓+现金）：${formatCurrency(summary.estimatedTotal)}`);
   setText("estimated-total-formula", `${formatCurrency(summary.holdingMarketValueTotal)} + ${formatCurrency(state.cashAmount)} = ${formatCurrency(summary.estimatedTotal)}`);
   setText(
     "owner-a-summary-line",
@@ -720,7 +752,7 @@ function renderDashboard(state) {
     `${summary.memberBName}归属资产：股票 ${formatCurrency(summary.assignedAssetBStock)} + 基金 ${formatCurrency(summary.assignedAssetBFund)} = ${formatCurrency(summary.assignedAssetB)}`
   );
 
-  setText("gap-line", `账户差额：${formatCurrency(summary.gap)}`);
+  setText("gap-line", `核算差额：${formatCurrency(summary.gap)}`);
   setText("gap-formula", `${formatCurrency(summary.currentTotalAsset)} - ${formatCurrency(summary.estimatedTotal)} = ${formatCurrency(summary.gap)}`);
   setPositiveNegative(byId("gap-line"), -summary.gap);
 
@@ -802,10 +834,10 @@ function renderProfitCurve(state, summary) {
   const peak = points.reduce((acc, p) => (p.totalAsset > acc.totalAsset ? p : acc), points[0]);
   const trough = points.reduce((acc, p) => (p.totalAsset < acc.totalAsset ? p : acc), points[0]);
 
-  setText("curve-start-line", `起点：${formatCurrency(first.totalAsset)}`);
-  setText("curve-end-line", `当前：${formatCurrency(last.totalAsset)}`);
-  setText("curve-peak-line", `峰值：${formatCurrency(peak.totalAsset)}`);
-  setText("curve-trough-line", `低点：${formatCurrency(trough.totalAsset)}`);
+  setText("curve-start-line", `区间起点：${formatCurrency(first.totalAsset)}`);
+  setText("curve-end-line", `当前值：${formatCurrency(last.totalAsset)}`);
+  setText("curve-peak-line", `区间高点：${formatCurrency(peak.totalAsset)}`);
+  setText("curve-trough-line", `区间低点：${formatCurrency(trough.totalAsset)}`);
 
   setPositiveNegative(byId("curve-end-line"), last.totalAsset - first.totalAsset);
 }
@@ -895,8 +927,8 @@ function collectEditorHoldingsFromDom() {
 }
 
 function collectOperationSnapshotFromDom(state) {
-  const currentNameA = String(state.members?.[0]?.name || "").trim() || "曾";
-  const currentNameB = String(state.members?.[1]?.name || "").trim() || "陈";
+  const currentNameA = String(state.members?.[0]?.name || "").trim() || "成员一";
+  const currentNameB = String(state.members?.[1]?.name || "").trim() || "成员二";
 
   return {
     members: [
@@ -919,8 +951,8 @@ function renderOperationTargetOptions(state) {
   const select = byId("capital-target");
   if (!select) return;
 
-  const nameA = String(state.members?.[0]?.name || "").trim() || "曾";
-  const nameB = String(state.members?.[1]?.name || "").trim() || "陈";
+  const nameA = String(state.members?.[0]?.name || "").trim() || "成员一";
+  const nameB = String(state.members?.[1]?.name || "").trim() || "成员二";
 
   const optionA = select.querySelector('option[value="memberA"]');
   const optionB = select.querySelector('option[value="memberB"]');
@@ -929,8 +961,8 @@ function renderOperationTargetOptions(state) {
 }
 
 function renderHoldingOwnerOptions(state) {
-  const nameA = String(state.members?.[0]?.name || "").trim() || "曾";
-  const nameB = String(state.members?.[1]?.name || "").trim() || "陈";
+  const nameA = String(state.members?.[0]?.name || "").trim() || "成员一";
+  const nameB = String(state.members?.[1]?.name || "").trim() || "成员二";
 
   document
     .querySelectorAll('#stock-editor-body select[data-field="owner"], #fund-editor-body select[data-field="owner"]')
@@ -952,12 +984,12 @@ function renderOperationPreview(state) {
   const amount = number(byId("capital-amount")?.value);
 
   if (amount <= 0) {
-    preview.textContent = "规则：操作金额 ÷ 当前净值 = 本金份额变化";
+    preview.textContent = "规则：操作金额 ÷ 股票账户净值 = 本金份额变化";
     return;
   }
 
   if (summary.totalPrincipal <= 0 || summary.netValue <= 0) {
-    preview.textContent = "当前净值不可用。请先确保本金和总资产已初始化。";
+    preview.textContent = "净值不可用，请先完成本金与股票账户快照初始化。";
     return;
   }
 
@@ -976,7 +1008,7 @@ function renderOperationPreview(state) {
   }
 
   const sign = action === "deposit" ? "+" : "-";
-  preview.textContent = `预览：${action === "deposit" ? "入金" : "出金"} ${formatCurrency(amount)}，净值 ${summary.netValue.toFixed(4)}，本金份额 ${sign}${formatCurrency(principalDelta)}（${summary.memberAName} ${sign}${formatCurrency(deltaA)}，${summary.memberBName} ${sign}${formatCurrency(deltaB)}）`;
+  preview.textContent = `预览：${action === "deposit" ? "入金" : "出金"} ${formatCurrency(amount)}，股票净值 ${summary.netValue.toFixed(4)}，本金份额 ${sign}${formatCurrency(principalDelta)}（${summary.memberAName} ${sign}${formatCurrency(deltaA)}，${summary.memberBName} ${sign}${formatCurrency(deltaB)}）`;
 }
 
 function renderOperationSummary(state) {
@@ -994,7 +1026,7 @@ function renderOperationSummary(state) {
   setText("op-net-value-value", summary.netValue.toFixed(4));
   setText("op-stock-snapshot-line", `股票资产快照：${formatCurrency(summary.stockSnapshotAsset)}`);
   setText("op-total-asset-formula", `总资产 = ${formatCurrency(summary.stockSnapshotAsset)} + ${formatCurrency(summary.fundMarketValueTotal)}`);
-  setText("op-progress-caption", `资产/本金：${principalRatio.toFixed(2)}%`);
+  setText("op-progress-caption", `资产本金比：${principalRatio.toFixed(2)}%`);
   setText("op-total-profit-chip", `累计收益：${formatCurrency(totalProfit)}`);
   setText(
     "op-member-a-line",
@@ -1043,16 +1075,16 @@ function renderOperationSummary(state) {
   if (structureStockBar) structureStockBar.style.width = `${Math.max(0, Math.min(100, stockShare)).toFixed(2)}%`;
   if (structureFundBar) structureFundBar.style.width = `${Math.max(0, Math.min(100, fundShare)).toFixed(2)}%`;
   if (structureCashBar) structureCashBar.style.width = `${Math.max(0, Math.min(100, cashShare)).toFixed(2)}%`;
-  setText("op-estimated-total-line", `估算总资产(股票+基金+现金)：${formatCurrency(summary.estimatedTotal)}`);
-  setText("op-estimated-gap-line", `与当前总资产差额：${formatCurrency(summary.gap)}（股票侧差额：${formatCurrency(summary.stockGap)}）`);
+  setText("op-estimated-total-line", `估算资产合计（股票+基金+现金）：${formatCurrency(summary.estimatedTotal)}`);
+  setText("op-estimated-gap-line", `与当前总资产的核算差额：${formatCurrency(summary.gap)}（股票侧差额：${formatCurrency(summary.stockGap)}）`);
   setPositiveNegative(byId("op-estimated-gap-line"), -summary.gap);
 
   const holdingsCount = summary.holdingsWithCalc.length;
   const logsCount = Array.isArray(state.logs) ? state.logs.length : 0;
   const snapshotsCount = Array.isArray(state.snapshots) ? state.snapshots.length : 0;
   setText("op-meta-holdings", `资产条目：${holdingsCount}（股${summary.stockHoldingCount} / 基${summary.fundHoldingCount}）`);
-  setText("op-meta-logs", `历史条数：${logsCount}`);
-  setText("op-meta-snapshots", `快照点：${snapshotsCount}`);
+  setText("op-meta-logs", `操作记录：${logsCount}`);
+  setText("op-meta-snapshots", `快照数量：${snapshotsCount}`);
 
   renderOperationTargetOptions(state);
   renderHoldingOwnerOptions(state);
@@ -1081,7 +1113,55 @@ let appState = loadState();
 const seededToday = ensureTodayBaseline(appState);
 const seededSnapshot = pushSnapshot(appState);
 if (seededToday || seededSnapshot) {
-  saveState(appState);
+  persistState(appState);
+}
+
+let cloudSaveTimer = null;
+let cloudSaveInFlight = false;
+let pendingCloudState = null;
+
+function cloneState(state) {
+  if (typeof structuredClone === "function") return structuredClone(state);
+  return JSON.parse(JSON.stringify(state));
+}
+
+async function flushCloudSaveQueue() {
+  if (!isCloudEnabled() || cloudSaveInFlight || !pendingCloudState) return;
+
+  cloudSaveInFlight = true;
+  const nextState = pendingCloudState;
+  pendingCloudState = null;
+
+  const ok = await saveCloudState(nextState);
+  if (!ok) {
+    console.warn("云端保存失败，已保留本地数据。");
+  }
+
+  cloudSaveInFlight = false;
+  if (pendingCloudState) {
+    flushCloudSaveQueue();
+  }
+}
+
+function queueCloudSave(state, { immediate = false } = {}) {
+  if (!isCloudEnabled()) return;
+
+  pendingCloudState = cloneState(state);
+  clearTimeout(cloudSaveTimer);
+
+  if (immediate) {
+    flushCloudSaveQueue();
+    return;
+  }
+
+  cloudSaveTimer = setTimeout(() => {
+    flushCloudSaveQueue();
+  }, 900);
+}
+
+function persistState(state, { cloudImmediate = false } = {}) {
+  saveState(state);
+  queueCloudSave(state, { immediate: cloudImmediate });
 }
 
 function showSaveStatus(text) {
@@ -1091,11 +1171,11 @@ function showSaveStatus(text) {
   status.textContent = text;
   clearTimeout(saveNoticeTimer);
   saveNoticeTimer = setTimeout(() => {
-    status.textContent = "数据已自动保存到本地";
+    status.textContent = isCloudEnabled() ? "变更已保存（本地与云端已同步）" : "变更已保存到本地";
   }, 1000);
 }
 
-function syncOperationAndSave({ notice = "已保存", logEntry = null } = {}) {
+function syncOperationAndSave({ notice = "已保存最新变更", logEntry = null } = {}) {
   if (!byId("operation-page")) return;
 
   const partial = collectOperationSnapshotFromDom(appState);
@@ -1111,7 +1191,7 @@ function syncOperationAndSave({ notice = "已保存", logEntry = null } = {}) {
   updateEditorHoldingComputed();
   renderOperationSummary(appState);
   renderDashboard(appState);
-  saveState(appState);
+  persistState(appState);
   showSaveStatus(notice);
 }
 
@@ -1123,7 +1203,7 @@ async function refreshQuoteForEditorRow(row, { silent = false } = {}) {
   const button = row.querySelector(".quote-refresh");
 
   if (assetType !== "stock") {
-    if (!silent) showSaveStatus("基金暂不支持自动行情，请手动维护当前净值");
+    if (!silent) showSaveStatus("基金暂不支持自动行情，请手动维护净值");
     return { ok: false, skipped: true };
   }
 
@@ -1146,7 +1226,7 @@ async function refreshQuoteForEditorRow(row, { silent = false } = {}) {
     updateEditorHoldingComputed();
     return { ok: true, skipped: false };
   } catch {
-    if (!silent) showSaveStatus(`获取 ${symbol} 行情失败`);
+    if (!silent) showSaveStatus(`获取 ${symbol} 行情失败，请稍后重试`);
     return { ok: false, skipped: false };
   } finally {
     button.disabled = false;
@@ -1157,7 +1237,7 @@ async function refreshQuoteForEditorRow(row, { silent = false } = {}) {
 function applyCapitalOperation() {
   if (!byId("operation-page")) return;
 
-  syncOperationAndSave({ notice: "同步最新编辑数据" });
+  syncOperationAndSave({ notice: "已同步当前编辑项" });
 
   const action = byId("capital-action")?.value || "deposit";
   const target = byId("capital-target")?.value || "proportional";
@@ -1165,18 +1245,18 @@ function applyCapitalOperation() {
   const note = byId("capital-note")?.value.trim() || "";
 
   if (amount <= 0) {
-    showSaveStatus("操作金额必须大于 0");
+    showSaveStatus("请输入大于 0 的操作金额");
     return;
   }
 
   const summary = computeSummary(appState);
   if (summary.totalPrincipal <= 0 || summary.netValue <= 0) {
-    showSaveStatus("当前净值无效，无法执行资金操作");
+    showSaveStatus("当前净值无效，暂无法执行资金操作");
     return;
   }
 
-  if (action === "withdraw" && amount > summary.currentTotalAsset + 1e-8) {
-    showSaveStatus("出金金额不能超过当前总资产");
+  if (action === "withdraw" && amount > summary.stockSnapshotAsset + 1e-8) {
+    showSaveStatus("出金金额不能超过当前股票账户资产");
     return;
   }
 
@@ -1196,21 +1276,21 @@ function applyCapitalOperation() {
 
   if (action === "withdraw") {
     if (target === "memberA" && amount > summary.assetA + 1e-8) {
-      showSaveStatus(`${summary.memberAName} 可出金上限为 ${formatCurrency(summary.assetA)}`);
+      showSaveStatus(`${summary.memberAName} 的可出金上限为 ${formatCurrency(summary.assetA)}`);
       return;
     }
     if (target === "memberB" && amount > summary.assetB + 1e-8) {
-      showSaveStatus(`${summary.memberBName} 可出金上限为 ${formatCurrency(summary.assetB)}`);
+      showSaveStatus(`${summary.memberBName} 的可出金上限为 ${formatCurrency(summary.assetB)}`);
       return;
     }
 
     appState.members[0].principal = round(Math.max(0, summary.principalA - deltaA));
     appState.members[1].principal = round(Math.max(0, summary.principalB - deltaB));
-    appState.currentTotalAsset = round(Math.max(0, summary.currentTotalAsset - amount), 2);
+    appState.currentTotalAsset = round(Math.max(0, summary.stockSnapshotAsset - amount), 2);
   } else {
     appState.members[0].principal = round(summary.principalA + deltaA);
     appState.members[1].principal = round(summary.principalB + deltaB);
-    appState.currentTotalAsset = round(summary.currentTotalAsset + amount, 2);
+    appState.currentTotalAsset = round(summary.stockSnapshotAsset + amount, 2);
   }
 
   appState.updatedAt = new Date().toISOString();
@@ -1238,8 +1318,8 @@ function applyCapitalOperation() {
 
   renderOperationSummary(appState);
   renderDashboard(appState);
-  saveState(appState);
-  showSaveStatus(`${action === "deposit" ? "入金" : "出金"}已执行并记录`);
+  persistState(appState, { cloudImmediate: true });
+  showSaveStatus(`${action === "deposit" ? "入金" : "出金"}已执行并写入记录`);
 }
 
 function bindOperationEvents() {
@@ -1257,17 +1337,17 @@ function bindOperationEvents() {
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     syncOperationAndSave({
-      notice: "快照已保存",
+      notice: "账户快照已保存",
       logEntry: { type: "手动保存", detail: "更新账户快照" },
     });
   });
 
   form?.addEventListener("input", () => {
-    syncOperationAndSave({ notice: "自动保存" });
+    syncOperationAndSave({ notice: "检测到修改，已自动保存" });
   });
 
   const onAssetRowsInput = () => {
-    syncOperationAndSave({ notice: "持仓已更新" });
+    syncOperationAndSave({ notice: "持仓数据已更新" });
   };
 
   stockBody?.addEventListener("input", onAssetRowsInput);
@@ -1282,7 +1362,7 @@ function bindOperationEvents() {
     if (button.classList.contains("remove")) {
       button.closest("tr")?.remove();
       syncOperationAndSave({
-        notice: "已删除持仓并保存",
+        notice: "持仓已删除并保存",
         logEntry: { type: "持仓变更", detail: "删除一条持仓记录" },
       });
       return;
@@ -1295,7 +1375,7 @@ function bindOperationEvents() {
       const result = await refreshQuoteForEditorRow(row);
       if (result.ok) {
         syncOperationAndSave({
-          notice: "实时行情已更新",
+          notice: "实时行情已更新并保存",
           logEntry: { type: "行情刷新", detail: `更新 ${symbol} 实时价格` },
         });
       }
@@ -1309,7 +1389,7 @@ function bindOperationEvents() {
     if (button.classList.contains("remove")) {
       button.closest("tr")?.remove();
       syncOperationAndSave({
-        notice: "已删除基金并保存",
+        notice: "基金记录已删除并保存",
         logEntry: { type: "持仓变更", detail: "删除一条基金记录" },
       });
     }
@@ -1327,7 +1407,7 @@ function bindOperationEvents() {
 
     renderEditorHoldingRows(appState.holdings);
     syncOperationAndSave({
-      notice: "已新增股票行",
+      notice: "已新增股票条目",
       logEntry: { type: "持仓变更", detail: "新增一条股票记录" },
     });
   });
@@ -1344,7 +1424,7 @@ function bindOperationEvents() {
 
     renderEditorHoldingRows(appState.holdings);
     syncOperationAndSave({
-      notice: "已新增基金行",
+      notice: "已新增基金条目",
       logEntry: { type: "持仓变更", detail: "新增一条基金记录" },
     });
   });
@@ -1352,7 +1432,7 @@ function bindOperationEvents() {
   refreshQuotesBtn?.addEventListener("click", async () => {
     const rows = [...(stockBody?.querySelectorAll("tr") || [])];
     if (!rows.length) {
-      showSaveStatus("暂无股票可刷新");
+      showSaveStatus("当前无可刷新股票条目");
       return;
     }
 
@@ -1379,9 +1459,9 @@ function bindOperationEvents() {
       notice:
         failedCount === 0
           ? skippedCount === 0
-            ? `实时行情刷新完成：${successCount} 条`
-            : `实时行情刷新完成：成功 ${successCount}，跳过 ${skippedCount}`
-          : `实时行情刷新完成：成功 ${successCount}，失败 ${failedCount}，跳过 ${skippedCount}`,
+            ? `行情刷新完成：成功 ${successCount} 条`
+            : `行情刷新完成：成功 ${successCount}，跳过 ${skippedCount}`
+          : `行情刷新完成：成功 ${successCount}，失败 ${failedCount}，跳过 ${skippedCount}`,
       logEntry: {
         type: "行情刷新",
         detail: `股票批量刷新：成功 ${successCount}，失败 ${failedCount}，跳过 ${skippedCount}`,
@@ -1406,9 +1486,40 @@ function bindOperationEvents() {
     addLog(appState, { type: "历史清空", detail: "已清空历史记录" });
     renderOperationSummary(appState);
     renderDashboard(appState);
-    saveState(appState);
-    showSaveStatus("历史已清空");
+    persistState(appState, { cloudImmediate: true });
+    showSaveStatus("操作历史已清空");
   });
+}
+
+async function hydrateFromCloud() {
+  if (!isCloudEnabled()) return;
+
+  const cloudState = await loadCloudState();
+  if (!cloudState) {
+    queueCloudSave(appState, { immediate: true });
+    showSaveStatus("已初始化云端账本");
+    return;
+  }
+
+  appState = cloudState;
+  const seededCloudToday = ensureTodayBaseline(appState);
+  const seededCloudSnapshot = pushSnapshot(appState);
+  if (seededCloudToday || seededCloudSnapshot) {
+    persistState(appState, { cloudImmediate: true });
+  } else {
+    saveState(appState);
+  }
+
+  if (byId("dashboard-page")) {
+    renderDashboard(appState);
+  }
+
+  if (byId("operation-page")) {
+    fillOperationForm(appState);
+    renderOperationSummary(appState);
+  }
+
+  showSaveStatus("云端数据同步完成");
 }
 
 function init() {
@@ -1423,6 +1534,11 @@ function init() {
     renderOperationSummary(appState);
     bindOperationEvents();
   }
+
+  hydrateFromCloud().catch((error) => {
+    console.warn("云端同步失败，继续使用本地数据。", error);
+    showSaveStatus("云端同步失败，已切换为本地数据");
+  });
 }
 
 init();

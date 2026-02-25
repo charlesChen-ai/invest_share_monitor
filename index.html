@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>权益投资记录账本 - 展示页</title>
+    <title>权益投资账本 - 展示页</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,11 +18,11 @@
       <header class="hero reveal delay-1">
         <div>
           <p class="eyebrow">Shared Wealth Journal</p>
-          <h1>权益投资记录账本</h1>
-          <p class="subtitle">展示页只看结果。点击数字可展开查看计算方式。</p>
+          <h1>权益投资账本</h1>
+          <p class="subtitle">展示页用于汇总资产与收益表现。点击指标可展开查看计算口径。</p>
         </div>
         <div class="hero-tools">
-          <a class="link-btn" href="./operation.html">进入操作页</a>
+          <a class="link-btn" href="./operation.html">前往操作页</a>
           <div class="stamp">
             <span>更新时间</span>
             <strong id="updated-at-text">-</strong>
@@ -32,29 +32,29 @@
 
       <section class="top-layout">
         <article class="card strong reveal delay-2">
-            <p class="label">当前总资产</p>
+            <p class="label">总资产总览</p>
             <h2 id="current-asset">¥0.00</h2>
-            <p class="hint" id="current-asset-composition-hint">总资产 = 股票资产快照 + 基金市值</p>
+            <p class="hint" id="current-asset-composition-hint">总资产口径：股票账户快照 + 基金市值</p>
             <p class="hint" id="total-principal-hint">总本金：¥0.00</p>
             <div class="split-lines">
-              <p id="member-a-principal-line">曾本金：¥0.00</p>
-              <p id="member-b-principal-line">陈本金：¥0.00</p>
+              <p id="member-a-principal-line">成员一本金：¥0.00</p>
+              <p id="member-b-principal-line">成员二本金：¥0.00</p>
             </div>
             <div class="calc-group">
               <button id="net-value-line" class="calc-toggle" type="button" data-formula-id="net-value-formula" aria-expanded="false">
-                当前净值：0.0000
+                股票账户净值：0.0000
               </button>
-              <p id="net-value-formula" class="calc-formula">点击上方查看计算方式</p>
+              <p id="net-value-formula" class="calc-formula">点击指标查看计算口径</p>
             </div>
 
-            <p class="label">资产分配</p>
+            <p class="label">资产分配（展示口径）</p>
             <div class="allocation-grid">
               <div class="alloc-item">
                 <div class="calc-group">
                   <button id="member-a-asset-line" class="calc-toggle alloc-toggle" type="button" data-formula-id="member-a-asset-formula" aria-expanded="false">
-                    曾资产：¥0.00 · 占比 0.00%
+                    成员一资产：¥0.00 · 占比 0.00%
                   </button>
-                  <p id="member-a-asset-formula" class="calc-formula">点击上方查看计算方式</p>
+                  <p id="member-a-asset-formula" class="calc-formula">点击指标查看计算口径</p>
                 </div>
                 <div class="alloc-track">
                   <i id="member-a-alloc-bar"></i>
@@ -63,9 +63,9 @@
               <div class="alloc-item">
                 <div class="calc-group">
                   <button id="member-b-asset-line" class="calc-toggle alloc-toggle" type="button" data-formula-id="member-b-asset-formula" aria-expanded="false">
-                    陈资产：¥0.00 · 占比 0.00%
+                    成员二资产：¥0.00 · 占比 0.00%
                   </button>
-                  <p id="member-b-asset-formula" class="calc-formula">点击上方查看计算方式</p>
+                  <p id="member-b-asset-formula" class="calc-formula">点击指标查看计算口径</p>
                 </div>
                 <div class="alloc-track alt">
                   <i id="member-b-alloc-bar"></i>
@@ -73,7 +73,7 @@
               </div>
             </div>
             <div class="asset-structure">
-              <p class="label">资金结构</p>
+              <p class="label">资产结构</p>
               <div class="structure-head">
                 <p id="structure-stock-line">股票：¥0.00 · 0.00%</p>
                 <p id="structure-fund-line">基金：¥0.00 · 0.00%</p>
@@ -85,9 +85,9 @@
                 <i id="structure-cash-bar"></i>
               </div>
               <div class="structure-badges">
-                <p id="structure-profit-badge">累计收益：¥0.00</p>
+                <p id="structure-profit-badge">累计收益（持仓口径）：¥0.00</p>
                 <p id="structure-state-badge">净值状态：平稳</p>
-                <p id="structure-owner-badge">归属持仓：曾 ¥0.00 · 陈 ¥0.00</p>
+                <p id="structure-owner-badge">归属资产：成员一 ¥0.00 · 成员二 ¥0.00</p>
               </div>
             </div>
         </article>
@@ -96,48 +96,48 @@
           <article class="card profit-card reveal delay-3">
             <p class="label">总收益</p>
             <h2 id="total-profit-value">¥0.00</h2>
-            <p id="total-profit-rate" class="hint">收益率：0.00%</p>
+            <p id="total-profit-rate" class="hint">累计收益率：0.00%</p>
             <div class="calc-group">
               <button id="total-profit-line" class="calc-toggle" type="button" data-formula-id="total-profit-formula" aria-expanded="false">
-                总收益：¥0.00
+                累计收益：¥0.00
               </button>
-              <p id="total-profit-formula" class="calc-formula">点击上方查看计算方式</p>
+              <p id="total-profit-formula" class="calc-formula">点击指标查看计算口径</p>
             </div>
 
-            <p class="label">收益明细</p>
+            <p class="label">成员收益明细</p>
             <div class="split-lines">
               <div class="calc-group">
                 <button id="member-a-profit-line" class="calc-toggle" type="button" data-formula-id="member-a-profit-formula" aria-expanded="false">
-                  曾收益：¥0.00
+                  成员一收益：¥0.00
                 </button>
-                <p id="member-a-profit-formula" class="calc-formula">点击上方查看计算方式</p>
+                <p id="member-a-profit-formula" class="calc-formula">点击指标查看计算口径</p>
               </div>
               <div class="calc-group">
                 <button id="member-b-profit-line" class="calc-toggle" type="button" data-formula-id="member-b-profit-formula" aria-expanded="false">
-                  陈收益：¥0.00
+                  成员二收益：¥0.00
                 </button>
-                <p id="member-b-profit-formula" class="calc-formula">点击上方查看计算方式</p>
+                <p id="member-b-profit-formula" class="calc-formula">点击指标查看计算口径</p>
               </div>
             </div>
           </article>
 
           <article class="card today-card reveal delay-4">
-            <p class="label">今日收益</p>
+            <p class="label">当日收益</p>
             <h2 id="today-profit-total-value">¥0.00</h2>
-            <p id="today-profit-total-rate" class="hint">日内收益率：0.00%</p>
+            <p id="today-profit-total-rate" class="hint">当日收益率：0.00%</p>
             <div class="today-grid">
-              <p id="today-profit-a-line" class="today-chip">曾：¥0.00</p>
-              <p id="today-profit-b-line" class="today-chip">陈：¥0.00</p>
+              <p id="today-profit-a-line" class="today-chip">成员一：¥0.00</p>
+              <p id="today-profit-b-line" class="today-chip">成员二：¥0.00</p>
             </div>
-            <p id="today-profit-base-line" class="hint">基准资产：¥0.00</p>
+            <p id="today-profit-base-line" class="hint">当日基线资产：¥0.00</p>
           </article>
         </div>
       </section>
 
       <section class="card curve-card reveal delay-5">
         <div class="section-head">
-          <h3>收益曲线</h3>
-          <p>基于历史快照的总资产变化趋势</p>
+          <h3>资产变化曲线</h3>
+          <p>基于历史快照展示总资产趋势，用于观察阶段性表现。</p>
         </div>
         <div class="curve-wrap">
           <svg id="profit-curve" viewBox="0 0 760 230" aria-hidden="true">
@@ -156,17 +156,17 @@
           </svg>
         </div>
         <div class="curve-foot">
-          <p id="curve-start-line">起点：¥0.00</p>
-          <p id="curve-end-line">当前：¥0.00</p>
-          <p id="curve-peak-line">峰值：¥0.00</p>
-          <p id="curve-trough-line">低点：¥0.00</p>
+          <p id="curve-start-line">区间起点：¥0.00</p>
+          <p id="curve-end-line">当前值：¥0.00</p>
+          <p id="curve-peak-line">区间高点：¥0.00</p>
+          <p id="curve-trough-line">区间低点：¥0.00</p>
         </div>
       </section>
 
       <section class="card reveal delay-6">
         <div class="section-head">
-          <h3>持仓记录</h3>
-          <p>展示当前保存的股票/基金数据（如需编辑请前往操作页）。</p>
+          <h3>持仓清单</h3>
+          <p>展示当前保存的股票与基金持仓，编辑请前往操作页。</p>
         </div>
         <div class="table-wrap">
           <table>
@@ -191,7 +191,7 @@
 
       <section class="grid-2">
         <article class="card reveal delay-7">
-          <p class="label">总资产演示</p>
+          <p class="label">资产核算明细</p>
           <div class="split-lines">
             <p id="stock-total-line">股票市值：¥0.00</p>
             <p id="fund-total-line">基金市值：¥0.00</p>
@@ -201,35 +201,36 @@
             <button id="holding-total-line" class="calc-toggle" type="button" data-formula-id="holding-total-formula" aria-expanded="false">
               持仓市值合计：¥0.00
             </button>
-            <p id="holding-total-formula" class="calc-formula">点击上方查看计算方式</p>
+            <p id="holding-total-formula" class="calc-formula">点击指标查看计算口径</p>
           </div>
           <div class="calc-group">
             <button id="estimated-total-line" class="calc-toggle" type="button" data-formula-id="estimated-total-formula" aria-expanded="false">
-              持仓+现金：¥0.00
+              估算资产合计（持仓+现金）：¥0.00
             </button>
-            <p id="estimated-total-formula" class="calc-formula">点击上方查看计算方式</p>
+            <p id="estimated-total-formula" class="calc-formula">点击指标查看计算口径</p>
           </div>
-          <p class="label">按归属汇总</p>
+          <p class="label">归属资产汇总</p>
           <div class="split-lines">
-            <p id="owner-a-summary-line">曾归属资产：¥0.00</p>
-            <p id="owner-b-summary-line">陈归属资产：¥0.00</p>
+            <p id="owner-a-summary-line">成员一归属资产：¥0.00</p>
+            <p id="owner-b-summary-line">成员二归属资产：¥0.00</p>
           </div>
         </article>
 
         <article class="card reveal delay-8">
-          <p class="label">账户校验</p>
+          <p class="label">账本校验</p>
           <div class="calc-group">
             <button id="gap-line" class="calc-toggle" type="button" data-formula-id="gap-formula" aria-expanded="false">
-              账户差额：¥0.00
+              核算差额：¥0.00
             </button>
-            <p id="gap-formula" class="calc-formula">点击上方查看计算方式</p>
+            <p id="gap-formula" class="calc-formula">点击指标查看计算口径</p>
           </div>
-          <p class="hint">如果差额不为 0，通常表示有其他资产、在途资金或录入误差。</p>
+          <p class="hint">若差额不为 0，通常表示存在在途资金、未录入资产或录入误差。</p>
         </article>
       </section>
 
     </main>
 
+    <script src="./config.js"></script>
     <script src="./storage.js"></script>
     <script src="./app.js"></script>
   </body>

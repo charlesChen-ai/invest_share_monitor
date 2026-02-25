@@ -1,103 +1,125 @@
 # Investment Monitor (RMB Ledger)
 
-A lightweight frontend ledger for shared stock investing, designed for two people to track:
+A two-page frontend ledger for shared investing:
 
-- principal split
-- current total assets and net value
-- holdings (manual quantity/cost, optional real-time price refresh)
-- per-person assets/profit
-- cash + reconciliation gap
-- deposit/withdraw handling based on net value
-- operation history
+- `index.html`: dashboard (display)
+- `operation.html`: edit / operations
 
-All data is persisted in browser `localStorage`, so reopening the page keeps your latest state.
+Now supports **shared cloud storage via Supabase** (optional). If cloud is not configured, it still works with local browser storage.
 
 ## Files
 
-- `index.html`: dashboard / demonstration page (read-focused)
-- `operation.html`: operation page (edit, holdings maintenance, capital operations)
-- `styles.css`: UI styling and responsive layout
-- `app.js`: calculations, persistence, quote refresh, capital operations, logs
+- `index.html`: display page
+- `operation.html`: operation page
+- `styles.css`: styles
+- `app.js`: UI logic + calculations + sync flow
+- `storage.js`: local persistence + optional Supabase persistence
+- `config.js`: runtime config (Supabase URL/key/row id)
+- `config.example.js`: config template
 
-## Run
+## Quick Start (Local-only)
 
-1. Open `index.html` for the dashboard view.
-2. Click `进入操作页` to edit data and execute operations.
-3. All updates auto-save to `localStorage`.
+1. Open `/Users/chaos/Codes/invest_monitor/index.html`.
+2. Go to operation page and edit data.
+3. Data is saved in localStorage.
 
-No backend or dependency install is required.
+## Enable Shared Cloud Data (Supabase)
 
-## Main Features
+### 1. Create Supabase project
 
-### 1) RMB Ledger + Net Value
+Create a project at [Supabase](https://supabase.com/).
 
-- `当前净值 = 当前总资产 / 总本金`
-- per-person asset is calculated by net value and principal share
-- calculated metrics show result first; click the metric to expand its formula/details
-- dashboard and operation flows are separated into different pages
+### 2. Create table
 
-### 2) Holdings
+Run this SQL in Supabase SQL Editor:
 
-Each row tracks:
+```sql
+create table if not exists public.ledger_states (
+  id text primary key,
+  payload jsonb not null,
+  updated_at timestamptz not null default now()
+);
+```
 
-- stock code / name
-- quantity
-- average cost
-- current price
-- market value
-- cost value
-- unrealized PnL
+### 3. Allow browser read/write (simple setup)
 
-You can update current price manually, or use:
+For personal/internal use, run:
 
-- row-level `实时价`
-- bulk `刷新全部实时价`
+```sql
+alter table public.ledger_states enable row level security;
 
-Quote refresh requires internet access from the browser.
+create policy "anon can read ledger_states"
+on public.ledger_states
+for select
+to anon
+using (true);
 
-### 3) Capital Operation Logic (Deposit / Withdraw)
+create policy "anon can write ledger_states"
+on public.ledger_states
+for insert
+to anon
+with check (true);
 
-After principal is established, principal is not edited directly in the snapshot form.
-Use the capital operation section:
+create policy "anon can update ledger_states"
+on public.ledger_states
+for update
+to anon
+using (true)
+with check (true);
+```
 
-- action: `入金` or `出金`
-- target: proportional / member A / member B
-- amount
-- optional note
+### 4. Fill config
 
-Core formula for both directions:
+Edit `/Users/chaos/Codes/invest_monitor/config.js`:
 
-- `本金份额变化 = 操作金额 / 当前净值`
+```js
+window.LEDGER_CONFIG = {
+  supabaseUrl: "https://YOUR_PROJECT.supabase.co",
+  supabaseAnonKey: "YOUR_SUPABASE_ANON_KEY",
+  stateRowId: "shared-ledger",
+};
+```
 
-Then:
+Notes:
 
-- `入金`: increase principal share and increase total asset
-- `出金`: decrease principal share and decrease total asset
+- `stateRowId` must be the same for both devices/users.
+- `anon key` is a public key, but keep project policies minimal and controlled.
 
-This keeps net-value accounting consistent over time.
+### 5. Verify
 
-### 4) Operation History
+- Open operation page on your device, edit any field.
+- Open dashboard page on partner device (same deployed URL), refresh.
+- Both should see same data.
 
-Important actions are appended to a persistent log, including:
+## Deploy (Simplest)
 
-- manual save
-- holdings add/remove
-- quote refresh
-- deposit / withdraw
-- clear history
+### Option A: GitHub Pages
 
-## Edit-Time Rule
+1. Push repo to GitHub.
+2. Repo `Settings -> Pages`.
+3. Source: `Deploy from a branch`.
+4. Branch: `main`, folder: `/root`.
+5. Wait for the Pages URL.
 
-- There is no manual edit-time input.
-- Snapshot saves and capital operations always use current system time as `更新时间`.
+### Option B: Vercel
 
-## Data Persistence
+1. Import the GitHub repo into Vercel.
+2. Framework preset: `Other`.
+3. Deploy directly (no build command needed).
 
-- Storage key: `equity_ledger_rmb_v2`
-- Stored in browser `localStorage`
-- Clearing browser site data will remove saved records
+## Current Calculation Notes
 
-## Notes
+- Net value is **stock-account-only**:
+  - `净值 = 股票资产快照 / 总本金`
+- Total profit is holdings-based:
+  - `总收益 = 股票持仓总浮盈 + 基金持仓总浮盈`
+- Today profit is based on the day baseline of profit metrics.
 
-- This is a local tracking tool, not brokerage reconciliation.
-- Real-time quote source can fail depending on network/provider availability; manual price entry remains available.
+## Troubleshooting
+
+- If dashboard/operation shows old values, hard refresh (`Cmd+Shift+R`).
+- If cloud sync fails, check:
+  - `config.js` values
+  - Supabase table/policies
+  - browser console error logs
+- Without cloud config, app stays local-only by design.

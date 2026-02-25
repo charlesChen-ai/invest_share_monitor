@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>权益投资记录账本 - 操作页</title>
+    <title>权益投资账本 - 操作页</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,13 +18,13 @@
       <header class="hero reveal delay-1">
         <div>
           <p class="eyebrow">Shared Wealth Journal</p>
-          <h1>操作页</h1>
-          <p class="subtitle">在此维护账户快照、持仓、入金/出金。所有操作会写入历史。</p>
+          <h1>操作管理</h1>
+          <p class="subtitle">用于维护账户快照、持仓与资金操作，系统会自动记录关键变更。</p>
         </div>
         <div class="hero-tools">
           <a class="link-btn" href="./index.html">返回展示页</a>
           <div class="stamp">
-            <span>最近操作时间</span>
+            <span>最新更新时间</span>
             <strong id="operation-updated-at">-</strong>
           </div>
         </div>
@@ -32,7 +32,7 @@
 
       <section class="grid-2">
         <article class="card overview-card reveal delay-2">
-          <p class="label">当前概览</p>
+          <p class="label">账户概览</p>
           <div class="overview-panel">
             <div class="overview-main">
               <div class="metric">
@@ -40,7 +40,7 @@
                 <strong id="op-total-principal-value">¥0.00</strong>
               </div>
               <div class="metric">
-                <span>当前总资产(含基金)</span>
+                <span>当前总资产（含基金）</span>
                 <strong id="op-current-asset-value">¥0.00</strong>
               </div>
               <div class="metric highlight">
@@ -50,7 +50,7 @@
             </div>
             <div class="overview-progress">
               <div class="overview-progress-head">
-                <p id="op-progress-caption">资产/本金：0.00%</p>
+                <p id="op-progress-caption">资产本金比：0.00%</p>
                 <p id="op-total-profit-chip">累计收益：¥0.00</p>
               </div>
               <p id="op-stock-snapshot-line">股票资产快照：¥0.00</p>
@@ -60,14 +60,14 @@
               <p id="op-total-asset-formula">总资产 = 股票资产快照 + 基金市值</p>
             </div>
             <div class="overview-members">
-              <p id="op-member-a-line">成员A本金：¥0.00 · 占比 0.00%</p>
-              <p id="op-member-b-line">成员B本金：¥0.00 · 占比 0.00%</p>
+              <p id="op-member-a-line">成员一本金：¥0.00 · 占比 0.00%</p>
+              <p id="op-member-b-line">成员二本金：¥0.00 · 占比 0.00%</p>
             </div>
             <div class="overview-today">
               <p id="op-today-total-chip">今日收益：¥0.00 · 0.00%</p>
               <div class="overview-today-grid">
-                <p id="op-today-a-chip">成员A：¥0.00</p>
-                <p id="op-today-b-chip">成员B：¥0.00</p>
+                <p id="op-today-a-chip">成员一：¥0.00</p>
+                <p id="op-today-b-chip">成员二：¥0.00</p>
               </div>
             </div>
             <div class="overview-structure">
@@ -87,30 +87,30 @@
               <p id="op-estimated-gap-line">与当前总资产差额：¥0.00</p>
             </div>
             <div class="overview-meta">
-              <p id="op-meta-holdings">持仓数：0</p>
-              <p id="op-meta-logs">历史条数：0</p>
-              <p id="op-meta-snapshots">快照点：0</p>
+              <p id="op-meta-holdings">资产条目：0</p>
+              <p id="op-meta-logs">操作记录：0</p>
+              <p id="op-meta-snapshots">快照数量：0</p>
             </div>
           </div>
         </article>
 
         <article class="card snapshot-card reveal delay-3">
           <div class="section-head">
-            <h3>账户快照编辑</h3>
-            <p>保存时自动写入当前时间。</p>
+            <h3>账户快照维护</h3>
+            <p>保存后自动记录当前时间，并执行本地/云端同步。</p>
           </div>
           <form id="ledger-form" class="snapshot-form">
             <div class="snapshot-grid">
               <label class="field-card">
-                <span>成员 A 名称</span>
+                <span>成员一名称</span>
                 <input id="member-a-name" type="text" />
               </label>
               <label class="field-card">
-                <span>成员 B 名称</span>
+                <span>成员二名称</span>
                 <input id="member-b-name" type="text" />
               </label>
               <label class="field-card">
-                <span>股票资产快照 (RMB，不含基金)</span>
+                <span>股票账户快照（RMB，不含基金）</span>
                 <input id="current-total-asset" type="number" min="0" step="0.01" />
               </label>
               <label class="field-card">
@@ -120,7 +120,7 @@
             </div>
             <div class="snapshot-actions">
               <button id="save-btn" type="submit">保存快照</button>
-              <p id="save-status" class="status">已载入本地数据</p>
+              <p id="save-status" class="status">已加载账本数据</p>
             </div>
           </form>
         </article>
@@ -128,8 +128,8 @@
 
       <section class="card reveal delay-4">
         <div class="section-head">
-          <h3>股票持仓编辑（支持实时价）</h3>
-          <p>股票部分保留原有逻辑，可刷新实时市价并设置归属。</p>
+          <h3>股票持仓维护（支持实时行情）</h3>
+          <p>维护股票持仓信息，可刷新实时价格并设置归属对象。</p>
         </div>
         <div class="table-wrap">
           <table>
@@ -151,15 +151,15 @@
           </table>
         </div>
         <div class="actions">
-          <button id="refresh-quotes" type="button" class="ghost">刷新股票实时价</button>
+          <button id="refresh-quotes" type="button" class="ghost">刷新股票行情</button>
           <button id="add-stock" type="button" class="ghost">+ 添加股票</button>
         </div>
       </section>
 
       <section class="card reveal delay-5">
         <div class="section-head">
-          <h3>基金持仓编辑</h3>
-          <p>基金可单独管理，并支持按成员归属（可 100% 归某一方）。</p>
+          <h3>基金持仓维护</h3>
+          <p>基金支持独立录入，并可按成员或按本金比例进行归属。</p>
         </div>
         <div class="table-wrap">
           <table>
@@ -188,7 +188,7 @@
       <section class="card reveal delay-6">
         <div class="section-head">
           <h3>资金操作（入金/出金）</h3>
-          <p>本金不直接编辑，统一按当前净值换算份额。</p>
+          <p>本金不直接手动维护，系统按当前净值自动折算份额变化。</p>
         </div>
         <form id="capital-form">
           <div class="editor-grid">
@@ -200,11 +200,11 @@
               </select>
             </label>
             <label>
-              操作归属
+              归属对象
               <select id="capital-target">
                 <option value="proportional">按双方本金比例</option>
-                <option value="memberA">成员 A</option>
-                <option value="memberB">成员 B</option>
+                <option value="memberA">成员一</option>
+                <option value="memberB">成员二</option>
               </select>
             </label>
             <label>
@@ -213,20 +213,20 @@
             </label>
             <label>
               备注
-              <input id="capital-note" type="text" placeholder="可选备注" />
+              <input id="capital-note" type="text" placeholder="可填写本次操作说明" />
             </label>
           </div>
           <div class="actions">
             <button id="apply-capital" type="submit">执行操作</button>
           </div>
-          <p id="capital-preview" class="hint">规则：操作金额 ÷ 当前净值 = 本金份额变化</p>
+          <p id="capital-preview" class="hint">规则：操作金额 ÷ 股票净值 = 本金份额变化</p>
         </form>
       </section>
 
       <section class="card reveal delay-7">
         <div class="section-head">
           <h3>操作历史</h3>
-          <p>记录所有关键修改。可在操作页清空历史。</p>
+          <p>记录关键修改事件；可按需清空历史，不影响当前账本数据。</p>
         </div>
         <div class="table-wrap">
           <table class="history-table">
@@ -259,8 +259,8 @@
         <td>
           <select data-field="owner">
             <option value="proportional">按本金比例</option>
-            <option value="memberA">成员 A</option>
-            <option value="memberB">成员 B</option>
+            <option value="memberA">成员一</option>
+            <option value="memberB">成员二</option>
           </select>
         </td>
         <td>
@@ -285,8 +285,8 @@
         <td>
           <select data-field="owner">
             <option value="proportional">按本金比例</option>
-            <option value="memberA">成员 A</option>
-            <option value="memberB">成员 B</option>
+            <option value="memberA">成员一</option>
+            <option value="memberB">成员二</option>
           </select>
         </td>
         <td>
@@ -297,6 +297,7 @@
       </tr>
     </template>
 
+    <script src="./config.js"></script>
     <script src="./storage.js"></script>
     <script src="./app.js"></script>
   </body>

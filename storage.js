@@ -2,6 +2,8 @@
   const STORAGE_KEY = "equity_ledger_rmb_v2";
   const MAX_LOG_ENTRIES = 300;
   const MAX_SNAPSHOTS = 480;
+  const DEFAULT_STATE_ROW_ID = "shared-ledger";
+  const CLOUD_TABLE = "ledger_states";
 
   const HOLDING_TYPES = new Set(["stock", "fund"]);
   const HOLDING_OWNERS = new Set(["proportional", "memberA", "memberB"]);
@@ -54,6 +56,46 @@
     });
   }
 
+  function cloudConfig() {
+    const raw = global.LEDGER_CONFIG && typeof global.LEDGER_CONFIG === "object" ? global.LEDGER_CONFIG : {};
+    const supabaseUrl = String(raw.supabaseUrl || "").trim().replace(/\/+$/, "");
+    const supabaseAnonKey = String(raw.supabaseAnonKey || "").trim();
+    const stateRowId = String(raw.stateRowId || DEFAULT_STATE_ROW_ID).trim() || DEFAULT_STATE_ROW_ID;
+    return { supabaseUrl, supabaseAnonKey, stateRowId };
+  }
+
+  function isCloudEnabled() {
+    const cfg = cloudConfig();
+    return Boolean(cfg.supabaseUrl && cfg.supabaseAnonKey);
+  }
+
+  function normalizeLoadedState(parsed, defaults) {
+    const source = parsed && typeof parsed === "object" ? parsed : {};
+    const merged = {
+      ...defaults,
+      ...source,
+      members: normalizeMembers(source.members, defaults.members),
+      holdings: Array.isArray(source.holdings) ? source.holdings.map((h) => normalizeHolding(h)) : defaults.holdings,
+      logs: Array.isArray(source.logs) ? source.logs : defaults.logs,
+      dailyBaselines:
+        source.dailyBaselines && typeof source.dailyBaselines === "object"
+          ? source.dailyBaselines
+          : defaults.dailyBaselines,
+      snapshots: Array.isArray(source.snapshots) ? source.snapshots : [],
+    };
+
+    if (!merged.snapshots.length) {
+      merged.snapshots = [toSnapshotPoint(merged, merged.updatedAt || new Date().toISOString())];
+    }
+
+    const latestSnapshot = merged.snapshots[merged.snapshots.length - 1];
+    if (number(merged.currentTotalAsset) <= 0 && latestSnapshot && number(latestSnapshot.totalAsset) > 0) {
+      merged.currentTotalAsset = number(latestSnapshot.totalAsset);
+    }
+
+    return merged;
+  }
+
   function toSnapshotPoint(state, at = new Date().toISOString()) {
     const principalA = number(state.members?.[0]?.principal);
     const principalB = number(state.members?.[1]?.principal);
@@ -77,8 +119,8 @@
 
     return {
       members: [
-        { name: "曾", principal: 31573 },
-        { name: "陈", principal: 145182 },
+        { name: "成员一", principal: 31573 },
+        { name: "成员二", principal: 145182 },
       ],
       currentTotalAsset: initialTotalAsset,
       cashAmount: 4122.55,
@@ -122,32 +164,42 @@
 
       const parsed = JSON.parse(raw);
       const defaults = createDefaultState();
-
-      const merged = {
-        ...defaults,
-        ...parsed,
-        members: normalizeMembers(parsed.members, defaults.members),
-        holdings: Array.isArray(parsed.holdings) ? parsed.holdings.map((h) => normalizeHolding(h)) : defaults.holdings,
-        logs: Array.isArray(parsed.logs) ? parsed.logs : defaults.logs,
-        dailyBaselines:
-          parsed.dailyBaselines && typeof parsed.dailyBaselines === "object"
-            ? parsed.dailyBaselines
-            : defaults.dailyBaselines,
-        snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
-      };
-
-      if (!merged.snapshots.length) {
-        merged.snapshots = [toSnapshotPoint(merged, merged.updatedAt || new Date().toISOString())];
-      }
-
-      const latestSnapshot = merged.snapshots[merged.snapshots.length - 1];
-      if (number(merged.currentTotalAsset) <= 0 && latestSnapshot && number(latestSnapshot.totalAsset) > 0) {
-        merged.currentTotalAsset = number(latestSnapshot.totalAsset);
-      }
-
-      return merged;
+      return normalizeLoadedState(parsed, defaults);
     } catch {
       return createDefaultState();
+    }
+  }
+
+  async function loadCloudState() {
+    if (!isCloudEnabled()) return null;
+    if (typeof fetch !== "function") return null;
+
+    const { supabaseUrl, supabaseAnonKey, stateRowId } = cloudConfig();
+    const query = `id=eq.${encodeURIComponent(stateRowId)}&select=payload&limit=1`;
+    const url = `${supabaseUrl}/rest/v1/${CLOUD_TABLE}?${query}`;
+
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+        },
+      });
+
+      if (!response.ok) {
+        console.warn("读取云端账本失败。", response.status);
+        return null;
+      }
+
+      const rows = await response.json();
+      const payload = Array.isArray(rows) && rows[0] ? rows[0].payload : null;
+      if (!payload || typeof payload !== "object") return null;
+
+      return normalizeLoadedState(payload, createDefaultState());
+    } catch (error) {
+      console.warn("读取云端账本异常。", error);
+      return null;
     }
   }
 
@@ -157,6 +209,40 @@
       return true;
     } catch (error) {
       console.warn("保存账本数据失败，已继续使用内存数据。", error);
+      return false;
+    }
+  }
+
+  async function saveCloudState(state) {
+    if (!isCloudEnabled()) return false;
+    if (typeof fetch !== "function") return false;
+
+    const { supabaseUrl, supabaseAnonKey, stateRowId } = cloudConfig();
+    const url = `${supabaseUrl}/rest/v1/${CLOUD_TABLE}`;
+    const now = new Date().toISOString();
+    const payload = [{ id: stateRowId, payload: state, updated_at: now }];
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.warn("写入云端账本失败。", response.status, text);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.warn("写入云端账本异常。", error);
       return false;
     }
   }
@@ -221,9 +307,12 @@
     normalizeHolding,
     createDefaultState,
     loadState,
+    loadCloudState,
     saveState,
+    saveCloudState,
     addLog,
     ensureTodayBaseline,
     pushSnapshot,
+    isCloudEnabled,
   };
 })(window);
