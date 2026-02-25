@@ -1,18 +1,183 @@
-const STORAGE_KEY = "equity_ledger_rmb_v2";
-const MAX_LOG_ENTRIES = 300;
-const MAX_SNAPSHOTS = 480;
+function createFallbackLedgerStorage() {
+  const STORAGE_KEY = "equity_ledger_rmb_v2";
 
-function uid() {
-  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const uid = () =>
+    globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  const number = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const dateKeyOf = (date = new Date()) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+
+  const normalizeHolding = (raw = {}) => ({
+    id: raw.id || uid(),
+    assetType: raw.assetType === "fund" ? "fund" : "stock",
+    owner: raw.owner === "memberA" || raw.owner === "memberB" ? raw.owner : "proportional",
+    code: raw.code || "",
+    name: raw.name || "",
+    quantity: number(raw.quantity),
+    avgCost: number(raw.avgCost),
+    currentPrice: number(raw.currentPrice),
+  });
+
+  const normalizeMembers = (rawMembers, defaultMembers) => {
+    if (!Array.isArray(rawMembers) || rawMembers.length !== 2) return defaultMembers;
+
+    return rawMembers.map((member, index) => {
+      const fallback = defaultMembers[index] || { name: `成员${index === 0 ? "A" : "B"}`, principal: 0 };
+      const safeMember = member && typeof member === "object" ? member : {};
+      const name = String(safeMember.name || "").trim() || fallback.name;
+      const principal = number(safeMember.principal);
+      return { name, principal };
+    });
+  };
+
+  const createDefaultState = () => {
+    const now = new Date().toISOString();
+    return {
+      members: [
+        { name: "曾", principal: 31573 },
+        { name: "陈", principal: 145182 },
+      ],
+      currentTotalAsset: 176754.95,
+      cashAmount: 4122.55,
+      updatedAt: now,
+      holdings: [
+        normalizeHolding({
+          code: "300807",
+          name: "天迈科技",
+          quantity: 3100,
+          avgCost: 52.598,
+          currentPrice: 55.1,
+        }),
+      ],
+      logs: [{ id: uid(), at: now, type: "初始化", detail: "账本已创建" }],
+      dailyBaselines: {},
+      snapshots: [{ at: now, totalAsset: 176754.95, assetA: 31573, assetB: 145182 }],
+    };
+  };
+
+  const loadState = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return createDefaultState();
+      const parsed = JSON.parse(raw);
+      const defaults = createDefaultState();
+      const merged = {
+        ...defaults,
+        ...parsed,
+        members: normalizeMembers(parsed.members, defaults.members),
+        holdings: Array.isArray(parsed.holdings) ? parsed.holdings.map((h) => normalizeHolding(h)) : defaults.holdings,
+        logs: Array.isArray(parsed.logs) ? parsed.logs : defaults.logs,
+        dailyBaselines:
+          parsed.dailyBaselines && typeof parsed.dailyBaselines === "object"
+            ? parsed.dailyBaselines
+            : defaults.dailyBaselines,
+        snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : defaults.snapshots,
+      };
+
+      const latestSnapshot = merged.snapshots[merged.snapshots.length - 1];
+      if (number(merged.currentTotalAsset) <= 0 && latestSnapshot && number(latestSnapshot.totalAsset) > 0) {
+        merged.currentTotalAsset = number(latestSnapshot.totalAsset);
+      }
+
+      return merged;
+    } catch {
+      return createDefaultState();
+    }
+  };
+
+  const saveState = (state) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore fallback save errors
+    }
+  };
+
+  const addLog = (state, { type, detail, at }) => {
+    state.logs = [
+      { id: uid(), at: at || new Date().toISOString(), type, detail },
+      ...(state.logs || []),
+    ].slice(0, 300);
+  };
+
+  const snapshotOf = (state) => {
+    const principalA = number(state.members?.[0]?.principal);
+    const principalB = number(state.members?.[1]?.principal);
+    const totalPrincipal = principalA + principalB;
+    const totalAsset = number(state.currentTotalAsset);
+    const netValue = totalPrincipal > 0 ? totalAsset / totalPrincipal : 0;
+    return {
+      at: new Date().toISOString(),
+      totalAsset,
+      assetA: netValue * principalA,
+      assetB: netValue * principalB,
+    };
+  };
+
+  const ensureTodayBaseline = (state) => {
+    if (!state.dailyBaselines || typeof state.dailyBaselines !== "object") state.dailyBaselines = {};
+    const key = dateKeyOf();
+    if (state.dailyBaselines[key]) return false;
+    state.dailyBaselines[key] = snapshotOf(state);
+    return true;
+  };
+
+  const pushSnapshot = (state, { force = false } = {}) => {
+    if (!Array.isArray(state.snapshots)) state.snapshots = [];
+    const next = snapshotOf(state);
+    const last = state.snapshots[state.snapshots.length - 1];
+    if (last) {
+      const sameValue =
+        Math.abs(number(last.totalAsset) - next.totalAsset) < 0.01 &&
+        Math.abs(number(last.assetA) - next.assetA) < 0.01 &&
+        Math.abs(number(last.assetB) - next.assetB) < 0.01;
+      const timeDelta = Math.abs(new Date(next.at).getTime() - new Date(last.at).getTime());
+      if (!force && sameValue && timeDelta < 5 * 60 * 1000) return false;
+    }
+    state.snapshots.push(next);
+    if (state.snapshots.length > 480) {
+      state.snapshots.splice(0, state.snapshots.length - 480);
+    }
+    return true;
+  };
+
+  return { uid, number, dateKeyOf, normalizeHolding, loadState, saveState, addLog, ensureTodayBaseline, pushSnapshot };
 }
 
-function number(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+const REQUIRED_STORAGE_APIS = [
+  "uid",
+  "number",
+  "dateKeyOf",
+  "normalizeHolding",
+  "loadState",
+  "saveState",
+  "addLog",
+  "ensureTodayBaseline",
+  "pushSnapshot",
+];
+
+const hasValidStorageApi =
+  window.LedgerStorage &&
+  REQUIRED_STORAGE_APIS.every((name) => typeof window.LedgerStorage[name] === "function");
+
+if (!hasValidStorageApi) {
+  console.warn("storage.js 未加载，使用 app.js 内置回退存储逻辑。");
+  window.LedgerStorage = createFallbackLedgerStorage();
 }
+
+const { uid, number, dateKeyOf, normalizeHolding, loadState, saveState, addLog, ensureTodayBaseline, pushSnapshot } =
+  window.LedgerStorage;
 
 function round(value, precision = 4) {
   const factor = 10 ** precision;
@@ -27,6 +192,12 @@ function formatCurrency(value) {
   }).format(number(value));
 }
 
+function formatUnits(value) {
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: 3,
+  }).format(number(value));
+}
+
 function formatDate(value) {
   if (!value) return "未设置";
   const date = new Date(value);
@@ -38,13 +209,6 @@ function formatDate(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function dateKeyOf(date = new Date()) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
 }
 
 function byId(id) {
@@ -62,103 +226,14 @@ function setPositiveNegative(el, value) {
   el.classList.toggle("negative", value < 0);
 }
 
-function createDefaultState() {
-  const now = new Date().toISOString();
-  const initialTotalAsset = 176754.95;
-  const initialAssetA = 31573;
-  const initialAssetB = 145182;
-
-  return {
-    members: [
-      { name: "曾", principal: 31573 },
-      { name: "陈", principal: 145182 },
-    ],
-    currentTotalAsset: initialTotalAsset,
-    cashAmount: 4122.55,
-    updatedAt: now,
-    holdings: [
-      {
-        id: uid(),
-        code: "300807",
-        name: "天迈科技",
-        quantity: 3100,
-        avgCost: 52.598,
-        currentPrice: 55.1,
-      },
-    ],
-    logs: [
-      {
-        id: uid(),
-        at: now,
-        type: "初始化",
-        detail: "账本已创建",
-      },
-    ],
-    dailyBaselines: {},
-    snapshots: [
-      {
-        at: now,
-        totalAsset: initialTotalAsset,
-        assetA: initialAssetA,
-        assetB: initialAssetB,
-      },
-    ],
-  };
+function assetTypeText(type) {
+  return type === "fund" ? "基金" : "股票";
 }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createDefaultState();
-
-    const parsed = JSON.parse(raw);
-    const defaults = createDefaultState();
-
-    const merged = {
-      ...defaults,
-      ...parsed,
-      members: parsed.members?.length === 2 ? parsed.members : defaults.members,
-      holdings: Array.isArray(parsed.holdings) ? parsed.holdings : defaults.holdings,
-      logs: Array.isArray(parsed.logs) ? parsed.logs : defaults.logs,
-      dailyBaselines:
-        parsed.dailyBaselines && typeof parsed.dailyBaselines === "object"
-          ? parsed.dailyBaselines
-          : defaults.dailyBaselines,
-      snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
-    };
-
-    if (!merged.snapshots.length) {
-      const summary = computeSummary(merged);
-      merged.snapshots = [
-        {
-          at: merged.updatedAt || new Date().toISOString(),
-          totalAsset: summary.currentTotalAsset,
-          assetA: summary.assetA,
-          assetB: summary.assetB,
-        },
-      ];
-    }
-
-    return merged;
-  } catch {
-    return createDefaultState();
-  }
-}
-
-function saveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function addLog(state, { type, detail, at }) {
-  state.logs = [
-    {
-      id: uid(),
-      at: at || new Date().toISOString(),
-      type,
-      detail,
-    },
-    ...(state.logs || []),
-  ].slice(0, MAX_LOG_ENTRIES);
+function ownerText(owner, memberAName = "成员A", memberBName = "成员B") {
+  if (owner === "memberA") return memberAName;
+  if (owner === "memberB") return memberBName;
+  return "按本金比例";
 }
 
 function toTencentSymbol(rawCode) {
@@ -239,26 +314,30 @@ function fetchTencentQuote(symbol) {
 }
 
 function computeSummary(state) {
-  const memberA = state.members[0] || { name: "成员A", principal: 0 };
-  const memberB = state.members[1] || { name: "成员B", principal: 0 };
+  const members = Array.isArray(state.members) ? state.members : [];
+  const memberA = members[0] || { name: "成员A", principal: 0 };
+  const memberB = members[1] || { name: "成员B", principal: 0 };
 
+  const memberAName = String(memberA.name || "").trim() || "曾";
+  const memberBName = String(memberB.name || "").trim() || "陈";
   const principalA = number(memberA.principal);
   const principalB = number(memberB.principal);
   const totalPrincipal = principalA + principalB;
-  const currentTotalAsset = number(state.currentTotalAsset);
-  const netValue = totalPrincipal > 0 ? currentTotalAsset / totalPrincipal : 0;
+  const rawStockSnapshotAsset = number(state.currentTotalAsset);
 
-  const assetA = netValue * principalA;
-  const assetB = netValue * principalB;
-  const profitA = assetA - principalA;
-  const profitB = assetB - principalB;
+  const principalRatioA = totalPrincipal > 0 ? principalA / totalPrincipal : 0;
+  const principalRatioB = totalPrincipal > 0 ? principalB / totalPrincipal : 0;
 
-  const holdingsWithCalc = (state.holdings || []).map((h) => {
+  const holdingsSource = Array.isArray(state.holdings) ? state.holdings : [];
+  const holdingsWithCalc = holdingsSource.map((raw) => {
+    const h = normalizeHolding(raw);
     const quantity = number(h.quantity);
     const avgCost = number(h.avgCost);
     const currentPrice = number(h.currentPrice);
     const marketValue = quantity * currentPrice;
     const costValue = quantity * avgCost;
+    const ownerShareA = h.owner === "memberA" ? 1 : h.owner === "memberB" ? 0 : principalRatioA;
+    const ownerShareB = h.owner === "memberB" ? 1 : h.owner === "memberA" ? 0 : principalRatioB;
 
     return {
       ...h,
@@ -268,16 +347,59 @@ function computeSummary(state) {
       marketValue,
       costValue,
       pnl: marketValue - costValue,
+      ownerShareA,
+      ownerShareB,
+      ownerAssetA: marketValue * ownerShareA,
+      ownerAssetB: marketValue * ownerShareB,
     };
   });
 
   const holdingMarketValueTotal = holdingsWithCalc.reduce((sum, h) => sum + h.marketValue, 0);
-  const estimatedTotal = holdingMarketValueTotal + number(state.cashAmount);
+  const cashAmount = number(state.cashAmount);
+  const stockRows = holdingsWithCalc.filter((h) => h.assetType === "stock");
+  const fundRows = holdingsWithCalc.filter((h) => h.assetType === "fund");
+  const stockHoldingCount = stockRows.length;
+  const fundHoldingCount = fundRows.length;
+  const stockMarketValueTotal = stockRows.reduce((sum, h) => sum + h.marketValue, 0);
+  const fundMarketValueTotal = fundRows.reduce((sum, h) => sum + h.marketValue, 0);
+  const stockCostTotal = stockRows.reduce((sum, h) => sum + h.costValue, 0);
+  const fundCostTotal = fundRows.reduce((sum, h) => sum + h.costValue, 0);
+  const stockHoldingPnlTotal = stockRows.reduce((sum, h) => sum + h.pnl, 0);
+  const fundHoldingPnlTotal = fundRows.reduce((sum, h) => sum + h.pnl, 0);
+  const stockEstimatedTotal = stockMarketValueTotal + cashAmount;
+  const stockSnapshotAsset = rawStockSnapshotAsset > 0 ? rawStockSnapshotAsset : stockEstimatedTotal;
+  const currentTotalAsset = stockSnapshotAsset + fundMarketValueTotal;
+  const estimatedTotal = holdingMarketValueTotal + cashAmount;
   const gap = currentTotalAsset - estimatedTotal;
+  const netValue = totalPrincipal > 0 ? currentTotalAsset / totalPrincipal : 0;
+  const assetA = netValue * principalA;
+  const assetB = netValue * principalB;
+  const profitA = assetA - principalA;
+  const profitB = assetB - principalB;
+  const assignedAssetAStock = stockRows.reduce((sum, h) => sum + h.ownerAssetA, 0);
+  const assignedAssetAFund = fundRows.reduce((sum, h) => sum + h.ownerAssetA, 0);
+  const assignedAssetBStock = stockRows.reduce((sum, h) => sum + h.ownerAssetB, 0);
+  const assignedAssetBFund = fundRows.reduce((sum, h) => sum + h.ownerAssetB, 0);
+  const assignedProfitAStock = stockRows.reduce((sum, h) => sum + h.pnl * h.ownerShareA, 0);
+  const assignedProfitAFund = fundRows.reduce((sum, h) => sum + h.pnl * h.ownerShareA, 0);
+  const assignedProfitBStock = stockRows.reduce((sum, h) => sum + h.pnl * h.ownerShareB, 0);
+  const assignedProfitBFund = fundRows.reduce((sum, h) => sum + h.pnl * h.ownerShareB, 0);
+  const assignedAssetA = assignedAssetAStock + assignedAssetAFund;
+  const assignedAssetB = assignedAssetBStock + assignedAssetBFund;
+  const assignedAssetTotal = assignedAssetA + assignedAssetB;
+  const allocationResidualAsset = currentTotalAsset - assignedAssetTotal;
+  const displayAssetA = assignedAssetA + allocationResidualAsset * principalRatioA;
+  const displayAssetB = assignedAssetB + allocationResidualAsset * principalRatioB;
+  const memberTotalProfitA = assignedProfitAStock + assignedProfitAFund;
+  const memberTotalProfitB = assignedProfitBStock + assignedProfitBFund;
+  const stockTotalProfit = stockHoldingPnlTotal;
+  const fundTotalProfit = fundHoldingPnlTotal;
+  const totalProfit = stockTotalProfit + fundTotalProfit;
+  const stockGap = stockSnapshotAsset - stockEstimatedTotal;
 
   return {
-    memberAName: memberA.name || "成员A",
-    memberBName: memberB.name || "成员B",
+    memberAName,
+    memberBName,
     principalA,
     principalB,
     totalPrincipal,
@@ -291,61 +413,70 @@ function computeSummary(state) {
     holdingMarketValueTotal,
     estimatedTotal,
     gap,
+    stockHoldingCount,
+    fundHoldingCount,
+    stockSnapshotAsset,
+    stockEstimatedTotal,
+    stockGap,
+    stockMarketValueTotal,
+    fundMarketValueTotal,
+    stockCostTotal,
+    fundCostTotal,
+    stockHoldingPnlTotal,
+    fundHoldingPnlTotal,
+    stockTotalProfit,
+    fundTotalProfit,
+    totalProfit,
+    principalRatioA,
+    principalRatioB,
+    assignedAssetAStock,
+    assignedAssetAFund,
+    assignedAssetBStock,
+    assignedAssetBFund,
+    assignedProfitAStock,
+    assignedProfitAFund,
+    assignedProfitBStock,
+    assignedProfitBFund,
+    assignedAssetA,
+    assignedAssetB,
+    assignedAssetTotal,
+    allocationResidualAsset,
+    displayAssetA,
+    displayAssetB,
+    memberTotalProfitA,
+    memberTotalProfitB,
   };
 }
 
-function ensureTodayBaseline(state) {
+function getTodayProfitBaseline(state, summary) {
   if (!state.dailyBaselines || typeof state.dailyBaselines !== "object") {
     state.dailyBaselines = {};
   }
 
   const key = dateKeyOf();
-  if (state.dailyBaselines[key]) return false;
+  const baseline = state.dailyBaselines[key] && typeof state.dailyBaselines[key] === "object" ? state.dailyBaselines[key] : {};
+  let changed = !state.dailyBaselines[key];
 
-  const summary = computeSummary(state);
-  state.dailyBaselines[key] = {
-    at: new Date().toISOString(),
-    totalAsset: summary.currentTotalAsset,
-    assetA: summary.assetA,
-    assetB: summary.assetB,
+  const ensureNumericField = (field, value, precision = 4) => {
+    const raw = baseline[field];
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return;
+    baseline[field] = round(value, precision);
+    changed = true;
   };
 
-  return true;
-}
+  ensureNumericField("totalProfit", summary.totalProfit, 4);
+  ensureNumericField("memberTotalProfitA", summary.memberTotalProfitA, 4);
+  ensureNumericField("memberTotalProfitB", summary.memberTotalProfitB, 4);
+  const profitBaseAsset = summary.stockCostTotal + summary.fundCostTotal;
+  ensureNumericField("profitBaseAsset", profitBaseAsset > 0 ? profitBaseAsset : summary.holdingMarketValueTotal, 2);
 
-function pushSnapshot(state, { force = false } = {}) {
-  if (!Array.isArray(state.snapshots)) {
-    state.snapshots = [];
+  if (changed) {
+    state.dailyBaselines[key] = baseline;
+    saveState(state);
   }
 
-  const summary = computeSummary(state);
-  const now = new Date().toISOString();
-  const next = {
-    at: now,
-    totalAsset: summary.currentTotalAsset,
-    assetA: summary.assetA,
-    assetB: summary.assetB,
-  };
-
-  const last = state.snapshots[state.snapshots.length - 1];
-  if (last) {
-    const sameValue =
-      Math.abs(number(last.totalAsset) - next.totalAsset) < 0.01 &&
-      Math.abs(number(last.assetA) - next.assetA) < 0.01 &&
-      Math.abs(number(last.assetB) - next.assetB) < 0.01;
-    const timeDelta = Math.abs(new Date(now).getTime() - new Date(last.at).getTime());
-
-    if (!force && sameValue && timeDelta < 5 * 60 * 1000) {
-      return false;
-    }
-  }
-
-  state.snapshots.push(next);
-  if (state.snapshots.length > MAX_SNAPSHOTS) {
-    state.snapshots.splice(0, state.snapshots.length - MAX_SNAPSHOTS);
-  }
-
-  return true;
+  return baseline;
 }
 
 function renderHistory(bodyId, logs) {
@@ -392,7 +523,7 @@ function initCalcToggles() {
   });
 }
 
-function renderDashboardHoldings(rows) {
+function renderDashboardHoldings(rows, memberAName, memberBName) {
   const body = byId("dashboard-holdings-body");
   if (!body) return;
 
@@ -400,7 +531,7 @@ function renderDashboardHoldings(rows) {
 
   if (!rows.length) {
     const row = document.createElement("tr");
-    row.innerHTML = '<td colspan="8">暂无持仓</td>';
+    row.innerHTML = '<td colspan="10">暂无持仓</td>';
     body.appendChild(row);
     return;
   }
@@ -409,20 +540,22 @@ function renderDashboardHoldings(rows) {
     const row = document.createElement("tr");
 
     const cells = [
+      assetTypeText(h.assetType),
       h.code || "-",
       h.name || "-",
-      String(h.quantity),
+      formatUnits(h.quantity),
       formatCurrency(h.avgCost),
       formatCurrency(h.currentPrice),
       formatCurrency(h.marketValue),
       formatCurrency(h.costValue),
       formatCurrency(h.pnl),
+      ownerText(h.owner, memberAName, memberBName),
     ];
 
     cells.forEach((cellText, index) => {
       const td = document.createElement("td");
       td.textContent = cellText;
-      if (index === 7) setPositiveNegative(td, h.pnl);
+      if (index === 8) setPositiveNegative(td, h.pnl);
       row.appendChild(td);
     });
 
@@ -437,16 +570,21 @@ function renderDashboard(state) {
 
   setText("updated-at-text", formatDate(state.updatedAt));
   setText("current-asset", formatCurrency(summary.currentTotalAsset));
+  setText(
+    "current-asset-composition-hint",
+    `总资产 = 股票资产快照 ${formatCurrency(summary.stockSnapshotAsset)} + 基金市值 ${formatCurrency(summary.fundMarketValueTotal)}`
+  );
   setText("total-principal-hint", `总本金：${formatCurrency(summary.totalPrincipal)}`);
 
-  const totalProfit = summary.currentTotalAsset - summary.totalPrincipal;
-  const totalProfitRate = summary.totalPrincipal > 0 ? (totalProfit / summary.totalPrincipal) * 100 : 0;
+  const totalProfit = summary.totalProfit;
+  const totalProfitBase = summary.stockCostTotal + summary.fundCostTotal;
+  const totalProfitRate = totalProfitBase > 0 ? (totalProfit / totalProfitBase) * 100 : 0;
   setText("total-profit-value", formatCurrency(totalProfit));
   setText("total-profit-rate", `收益率：${totalProfitRate.toFixed(2)}%`);
   setText("total-profit-line", `总收益：${formatCurrency(totalProfit)}`);
   setText(
     "total-profit-formula",
-    `${formatCurrency(summary.currentTotalAsset)} - ${formatCurrency(summary.totalPrincipal)} = ${formatCurrency(totalProfit)}`
+    `股票总收益 ${formatCurrency(summary.stockTotalProfit)} + 基金总收益 ${formatCurrency(summary.fundTotalProfit)} = ${formatCurrency(totalProfit)}`
   );
   setPositiveNegative(byId("total-profit-value"), totalProfit);
   setPositiveNegative(byId("total-profit-rate"), totalProfitRate);
@@ -458,27 +596,27 @@ function renderDashboard(state) {
   setText("net-value-line", `当前净值：${summary.netValue.toFixed(4)}`);
   setText("net-value-formula", `${formatCurrency(summary.currentTotalAsset)} ÷ ${formatCurrency(summary.totalPrincipal)} = ${summary.netValue.toFixed(4)}`);
 
-  const allocationBase = summary.assetA + summary.assetB;
-  const allocationA = allocationBase > 0 ? (summary.assetA / allocationBase) * 100 : 0;
-  const allocationB = allocationBase > 0 ? (summary.assetB / allocationBase) * 100 : 0;
+  const allocationBase = summary.displayAssetA + summary.displayAssetB;
+  const allocationA = allocationBase > 0 ? (summary.displayAssetA / allocationBase) * 100 : 0;
+  const allocationB = allocationBase > 0 ? (summary.displayAssetB / allocationBase) * 100 : 0;
   const allocationAFormula =
     allocationBase > 0
-      ? `${formatCurrency(summary.assetA)} ÷ ${formatCurrency(allocationBase)} = ${allocationA.toFixed(2)}%`
+      ? `${formatCurrency(summary.displayAssetA)} ÷ ${formatCurrency(allocationBase)} = ${allocationA.toFixed(2)}%`
       : "总分配资产为 0，占比按 0.00% 处理";
   const allocationBFormula =
     allocationBase > 0
-      ? `${formatCurrency(summary.assetB)} ÷ ${formatCurrency(allocationBase)} = ${allocationB.toFixed(2)}%`
+      ? `${formatCurrency(summary.displayAssetB)} ÷ ${formatCurrency(allocationBase)} = ${allocationB.toFixed(2)}%`
       : "总分配资产为 0，占比按 0.00% 处理";
-  setText("member-a-asset-line", `${summary.memberAName}资产：${formatCurrency(summary.assetA)} · 占比 ${allocationA.toFixed(2)}%`);
+  setText("member-a-asset-line", `${summary.memberAName}资产：${formatCurrency(summary.displayAssetA)} · 占比 ${allocationA.toFixed(2)}%`);
   setText(
     "member-a-asset-formula",
-    `${summary.netValue.toFixed(4)} × ${formatCurrency(summary.principalA)} = ${formatCurrency(summary.assetA)}；${allocationAFormula}`
+    `归属持仓 ${formatCurrency(summary.assignedAssetA)} + 剩余资产 ${formatCurrency(summary.allocationResidualAsset)} × 本金占比 ${(summary.principalRatioA * 100).toFixed(2)}% = ${formatCurrency(summary.displayAssetA)}；${allocationAFormula}`
   );
 
-  setText("member-b-asset-line", `${summary.memberBName}资产：${formatCurrency(summary.assetB)} · 占比 ${allocationB.toFixed(2)}%`);
+  setText("member-b-asset-line", `${summary.memberBName}资产：${formatCurrency(summary.displayAssetB)} · 占比 ${allocationB.toFixed(2)}%`);
   setText(
     "member-b-asset-formula",
-    `${summary.netValue.toFixed(4)} × ${formatCurrency(summary.principalB)} = ${formatCurrency(summary.assetB)}；${allocationBFormula}`
+    `归属持仓 ${formatCurrency(summary.assignedAssetB)} + 剩余资产 ${formatCurrency(summary.allocationResidualAsset)} × 本金占比 ${(summary.principalRatioB * 100).toFixed(2)}% = ${formatCurrency(summary.displayAssetB)}；${allocationBFormula}`
   );
 
   const allocationABar = byId("member-a-alloc-bar");
@@ -486,21 +624,30 @@ function renderDashboard(state) {
   if (allocationABar) allocationABar.style.width = `${Math.max(0, Math.min(100, allocationA)).toFixed(2)}%`;
   if (allocationBBar) allocationBBar.style.width = `${Math.max(0, Math.min(100, allocationB)).toFixed(2)}%`;
 
-  const recordedHolding = Math.max(0, summary.holdingMarketValueTotal);
+  const recordedStock = Math.max(0, summary.stockMarketValueTotal);
+  const recordedFund = Math.max(0, summary.fundMarketValueTotal);
   const recordedCash = Math.max(0, number(state.cashAmount));
-  const structureBase = recordedHolding + recordedCash;
-  const holdingShare = structureBase > 0 ? (recordedHolding / structureBase) * 100 : 0;
+  const structureBase = recordedStock + recordedFund + recordedCash;
+  const stockShare = structureBase > 0 ? (recordedStock / structureBase) * 100 : 0;
+  const fundShare = structureBase > 0 ? (recordedFund / structureBase) * 100 : 0;
   const cashShare = structureBase > 0 ? (recordedCash / structureBase) * 100 : 0;
-  setText("structure-holding-line", `持仓：${formatCurrency(recordedHolding)} · ${holdingShare.toFixed(2)}%`);
+  setText("structure-stock-line", `股票：${formatCurrency(recordedStock)} · ${stockShare.toFixed(2)}%`);
+  setText("structure-fund-line", `基金：${formatCurrency(recordedFund)} · ${fundShare.toFixed(2)}%`);
   setText("structure-cash-line", `现金：${formatCurrency(recordedCash)} · ${cashShare.toFixed(2)}%`);
 
-  const holdingBar = byId("structure-holding-bar");
+  const stockBar = byId("structure-stock-bar");
+  const fundBar = byId("structure-fund-bar");
   const cashBar = byId("structure-cash-bar");
-  if (holdingBar) holdingBar.style.width = `${Math.max(0, Math.min(100, holdingShare)).toFixed(2)}%`;
+  if (stockBar) stockBar.style.width = `${Math.max(0, Math.min(100, stockShare)).toFixed(2)}%`;
+  if (fundBar) fundBar.style.width = `${Math.max(0, Math.min(100, fundShare)).toFixed(2)}%`;
   if (cashBar) cashBar.style.width = `${Math.max(0, Math.min(100, cashShare)).toFixed(2)}%`;
 
   setText("structure-profit-badge", `累计收益：${formatCurrency(totalProfit)}`);
   setPositiveNegative(byId("structure-profit-badge"), totalProfit);
+  setText(
+    "structure-owner-badge",
+    `归属持仓：${summary.memberAName} ${formatCurrency(summary.assignedAssetA)} · ${summary.memberBName} ${formatCurrency(summary.assignedAssetB)}`
+  );
 
   let netState = "净值状态：相对平稳";
   if (summary.netValue >= 1.2) {
@@ -518,25 +665,33 @@ function renderDashboard(state) {
     if (summary.netValue < 0.95) stateBadge.classList.add("negative");
   }
 
-  setText("member-a-profit-line", `${summary.memberAName}收益：${formatCurrency(summary.profitA)}`);
-  setText("member-a-profit-formula", `${formatCurrency(summary.assetA)} - ${formatCurrency(summary.principalA)} = ${formatCurrency(summary.profitA)}`);
+  setText(
+    "member-a-profit-line",
+    `${summary.memberAName}收益：${formatCurrency(summary.memberTotalProfitA)}`
+  );
+  setText(
+    "member-a-profit-formula",
+    `股票收益 ${formatCurrency(summary.assignedProfitAStock)} + 基金收益 ${formatCurrency(summary.assignedProfitAFund)} = ${formatCurrency(summary.memberTotalProfitA)}`
+  );
 
-  setText("member-b-profit-line", `${summary.memberBName}收益：${formatCurrency(summary.profitB)}`);
-  setText("member-b-profit-formula", `${formatCurrency(summary.assetB)} - ${formatCurrency(summary.principalB)} = ${formatCurrency(summary.profitB)}`);
+  setText(
+    "member-b-profit-line",
+    `${summary.memberBName}收益：${formatCurrency(summary.memberTotalProfitB)}`
+  );
+  setText(
+    "member-b-profit-formula",
+    `股票收益 ${formatCurrency(summary.assignedProfitBStock)} + 基金收益 ${formatCurrency(summary.assignedProfitBFund)} = ${formatCurrency(summary.memberTotalProfitB)}`
+  );
 
-  setPositiveNegative(byId("member-a-profit-line"), summary.profitA);
-  setPositiveNegative(byId("member-b-profit-line"), summary.profitB);
+  setPositiveNegative(byId("member-a-profit-line"), summary.memberTotalProfitA);
+  setPositiveNegative(byId("member-b-profit-line"), summary.memberTotalProfitB);
 
-  const todayBaseline = state.dailyBaselines?.[dateKeyOf()] || {
-    totalAsset: summary.currentTotalAsset,
-    assetA: summary.assetA,
-    assetB: summary.assetB,
-  };
+  const todayBaseline = getTodayProfitBaseline(state, summary);
 
-  const todayTotalProfit = summary.currentTotalAsset - number(todayBaseline.totalAsset);
-  const todayAProfit = summary.assetA - number(todayBaseline.assetA);
-  const todayBProfit = summary.assetB - number(todayBaseline.assetB);
-  const todayBaseAsset = number(todayBaseline.totalAsset);
+  const todayTotalProfit = summary.totalProfit - number(todayBaseline.totalProfit);
+  const todayAProfit = summary.memberTotalProfitA - number(todayBaseline.memberTotalProfitA);
+  const todayBProfit = summary.memberTotalProfitB - number(todayBaseline.memberTotalProfitB);
+  const todayBaseAsset = number(todayBaseline.profitBaseAsset);
   const todayTotalProfitRate = todayBaseAsset > 0 ? (todayTotalProfit / todayBaseAsset) * 100 : 0;
 
   setText("today-profit-total-value", formatCurrency(todayTotalProfit));
@@ -549,18 +704,28 @@ function renderDashboard(state) {
   setPositiveNegative(byId("today-profit-a-line"), todayAProfit);
   setPositiveNegative(byId("today-profit-b-line"), todayBProfit);
 
+  setText("stock-total-line", `股票市值：${formatCurrency(summary.stockMarketValueTotal)}`);
+  setText("fund-total-line", `基金市值：${formatCurrency(summary.fundMarketValueTotal)}`);
   setText("cash-line", `持有现金：${formatCurrency(state.cashAmount)}`);
   setText("holding-total-line", `持仓市值合计：${formatCurrency(summary.holdingMarketValueTotal)}`);
-  setText("holding-total-formula", "各持仓行 (数量 × 当前市价) 求和");
+  setText("holding-total-formula", "各资产行 (份额/股数 × 当前净值/市价) 求和");
   setText("estimated-total-line", `持仓+现金：${formatCurrency(summary.estimatedTotal)}`);
   setText("estimated-total-formula", `${formatCurrency(summary.holdingMarketValueTotal)} + ${formatCurrency(state.cashAmount)} = ${formatCurrency(summary.estimatedTotal)}`);
+  setText(
+    "owner-a-summary-line",
+    `${summary.memberAName}归属资产：股票 ${formatCurrency(summary.assignedAssetAStock)} + 基金 ${formatCurrency(summary.assignedAssetAFund)} = ${formatCurrency(summary.assignedAssetA)}`
+  );
+  setText(
+    "owner-b-summary-line",
+    `${summary.memberBName}归属资产：股票 ${formatCurrency(summary.assignedAssetBStock)} + 基金 ${formatCurrency(summary.assignedAssetBFund)} = ${formatCurrency(summary.assignedAssetB)}`
+  );
 
   setText("gap-line", `账户差额：${formatCurrency(summary.gap)}`);
   setText("gap-formula", `${formatCurrency(summary.currentTotalAsset)} - ${formatCurrency(summary.estimatedTotal)} = ${formatCurrency(summary.gap)}`);
   setPositiveNegative(byId("gap-line"), -summary.gap);
 
   renderProfitCurve(state, summary);
-  renderDashboardHoldings(summary.holdingsWithCalc);
+  renderDashboardHoldings(summary.holdingsWithCalc, summary.memberAName, summary.memberBName);
 }
 
 function renderProfitCurve(state, summary) {
@@ -645,43 +810,52 @@ function renderProfitCurve(state, summary) {
   setPositiveNegative(byId("curve-end-line"), last.totalAsset - first.totalAsset);
 }
 
-function createHoldingRowTemplate() {
-  return {
+function createHoldingRowTemplate(assetType = "stock") {
+  return normalizeHolding({
     id: uid(),
+    assetType,
+    owner: "proportional",
     code: "",
     name: "",
     quantity: 0,
     avgCost: 0,
     currentPrice: 0,
-  };
+  });
 }
 
 function renderEditorHoldingRows(holdings) {
-  const body = byId("holdings-editor-body");
-  const template = byId("holding-editor-row-template");
-  if (!body || !template) return;
+  const stockBody = byId("stock-editor-body");
+  const stockTemplate = byId("stock-editor-row-template");
+  const fundBody = byId("fund-editor-body");
+  const fundTemplate = byId("fund-editor-row-template");
+  if (!stockBody || !stockTemplate || !fundBody || !fundTemplate) return;
 
-  body.innerHTML = "";
+  stockBody.innerHTML = "";
+  fundBody.innerHTML = "";
 
   holdings.forEach((holding) => {
-    const fragment = template.content.cloneNode(true);
+    const normalized = normalizeHolding(holding);
+    const isFund = normalized.assetType === "fund";
+    const fragment = (isFund ? fundTemplate : stockTemplate).content.cloneNode(true);
     const row = fragment.querySelector("tr");
 
-    row.dataset.id = holding.id || uid();
-    row.querySelector('[data-field="code"]').value = holding.code || "";
-    row.querySelector('[data-field="name"]').value = holding.name || "";
-    row.querySelector('[data-field="quantity"]').value = number(holding.quantity);
-    row.querySelector('[data-field="avgCost"]').value = number(holding.avgCost);
-    row.querySelector('[data-field="currentPrice"]').value = number(holding.currentPrice);
+    row.dataset.id = normalized.id || uid();
+    row.dataset.assetType = normalized.assetType;
+    row.querySelector('[data-field="owner"]').value = normalized.owner;
+    row.querySelector('[data-field="code"]').value = normalized.code || "";
+    row.querySelector('[data-field="name"]').value = normalized.name || "";
+    row.querySelector('[data-field="quantity"]').value = number(normalized.quantity);
+    row.querySelector('[data-field="avgCost"]').value = number(normalized.avgCost);
+    row.querySelector('[data-field="currentPrice"]').value = number(normalized.currentPrice);
 
-    body.appendChild(fragment);
+    (isFund ? fundBody : stockBody).appendChild(fragment);
   });
 
   updateEditorHoldingComputed();
 }
 
 function updateEditorHoldingComputed() {
-  const rows = [...(byId("holdings-editor-body")?.querySelectorAll("tr") || [])];
+  const rows = [...document.querySelectorAll("#stock-editor-body tr, #fund-editor-body tr")];
   rows.forEach((row) => {
     const quantity = number(row.querySelector('[data-field="quantity"]').value);
     const avgCost = number(row.querySelector('[data-field="avgCost"]').value);
@@ -701,27 +875,38 @@ function updateEditorHoldingComputed() {
 }
 
 function collectEditorHoldingsFromDom() {
-  const rows = [...(byId("holdings-editor-body")?.querySelectorAll("tr") || [])];
-  return rows.map((row) => ({
-    id: row.dataset.id || uid(),
-    code: row.querySelector('[data-field="code"]').value.trim(),
-    name: row.querySelector('[data-field="name"]').value.trim(),
-    quantity: number(row.querySelector('[data-field="quantity"]').value),
-    avgCost: number(row.querySelector('[data-field="avgCost"]').value),
-    currentPrice: number(row.querySelector('[data-field="currentPrice"]').value),
-  }));
+  const collectFromBody = (bodyId, assetType) => {
+    const rows = [...(byId(bodyId)?.querySelectorAll("tr") || [])];
+    return rows.map((row) =>
+      normalizeHolding({
+        id: row.dataset.id || uid(),
+        assetType,
+        owner: row.querySelector('[data-field="owner"]').value,
+        code: row.querySelector('[data-field="code"]').value.trim(),
+        name: row.querySelector('[data-field="name"]').value.trim(),
+        quantity: number(row.querySelector('[data-field="quantity"]').value),
+        avgCost: number(row.querySelector('[data-field="avgCost"]').value),
+        currentPrice: number(row.querySelector('[data-field="currentPrice"]').value),
+      })
+    );
+  };
+
+  return [...collectFromBody("stock-editor-body", "stock"), ...collectFromBody("fund-editor-body", "fund")];
 }
 
 function collectOperationSnapshotFromDom(state) {
+  const currentNameA = String(state.members?.[0]?.name || "").trim() || "曾";
+  const currentNameB = String(state.members?.[1]?.name || "").trim() || "陈";
+
   return {
     members: [
       {
-        name: byId("member-a-name")?.value.trim() || "成员A",
-        principal: state.members[0]?.principal || 0,
+        name: byId("member-a-name")?.value.trim() || currentNameA,
+        principal: state.members?.[0]?.principal || 0,
       },
       {
-        name: byId("member-b-name")?.value.trim() || "成员B",
-        principal: state.members[1]?.principal || 0,
+        name: byId("member-b-name")?.value.trim() || currentNameB,
+        principal: state.members?.[1]?.principal || 0,
       },
     ],
     currentTotalAsset: number(byId("current-total-asset")?.value),
@@ -734,12 +919,27 @@ function renderOperationTargetOptions(state) {
   const select = byId("capital-target");
   if (!select) return;
 
-  const nameA = state.members[0]?.name || "成员A";
-  const nameB = state.members[1]?.name || "成员B";
+  const nameA = String(state.members?.[0]?.name || "").trim() || "曾";
+  const nameB = String(state.members?.[1]?.name || "").trim() || "陈";
 
-  const options = select.options;
-  if (options[1]) options[1].textContent = `${nameA} 个人`;
-  if (options[2]) options[2].textContent = `${nameB} 个人`;
+  const optionA = select.querySelector('option[value="memberA"]');
+  const optionB = select.querySelector('option[value="memberB"]');
+  if (optionA) optionA.textContent = `${nameA} 个人`;
+  if (optionB) optionB.textContent = `${nameB} 个人`;
+}
+
+function renderHoldingOwnerOptions(state) {
+  const nameA = String(state.members?.[0]?.name || "").trim() || "曾";
+  const nameB = String(state.members?.[1]?.name || "").trim() || "陈";
+
+  document
+    .querySelectorAll('#stock-editor-body select[data-field="owner"], #fund-editor-body select[data-field="owner"]')
+    .forEach((select) => {
+      const optionA = select.querySelector('option[value="memberA"]');
+      const optionB = select.querySelector('option[value="memberB"]');
+      if (optionA) optionA.textContent = nameA;
+      if (optionB) optionB.textContent = nameB;
+    });
 }
 
 function renderOperationPreview(state) {
@@ -783,7 +983,7 @@ function renderOperationSummary(state) {
   if (!byId("operation-page")) return;
 
   const summary = computeSummary(state);
-  const totalProfit = summary.currentTotalAsset - summary.totalPrincipal;
+  const totalProfit = summary.totalProfit;
   const principalRatio = summary.totalPrincipal > 0 ? (summary.currentTotalAsset / summary.totalPrincipal) * 100 : 0;
   const principalShareA = summary.totalPrincipal > 0 ? (summary.principalA / summary.totalPrincipal) * 100 : 0;
   const principalShareB = summary.totalPrincipal > 0 ? (summary.principalB / summary.totalPrincipal) * 100 : 0;
@@ -792,15 +992,17 @@ function renderOperationSummary(state) {
   setText("op-total-principal-value", formatCurrency(summary.totalPrincipal));
   setText("op-current-asset-value", formatCurrency(summary.currentTotalAsset));
   setText("op-net-value-value", summary.netValue.toFixed(4));
+  setText("op-stock-snapshot-line", `股票资产快照：${formatCurrency(summary.stockSnapshotAsset)}`);
+  setText("op-total-asset-formula", `总资产 = ${formatCurrency(summary.stockSnapshotAsset)} + ${formatCurrency(summary.fundMarketValueTotal)}`);
   setText("op-progress-caption", `资产/本金：${principalRatio.toFixed(2)}%`);
   setText("op-total-profit-chip", `累计收益：${formatCurrency(totalProfit)}`);
   setText(
     "op-member-a-line",
-    `${summary.memberAName}本金：${formatCurrency(summary.principalA)} · 占比 ${principalShareA.toFixed(2)}%`
+    `${summary.memberAName}本金：${formatCurrency(summary.principalA)} · 占比 ${principalShareA.toFixed(2)}% · 归属持仓 ${formatCurrency(summary.assignedAssetA)}`
   );
   setText(
     "op-member-b-line",
-    `${summary.memberBName}本金：${formatCurrency(summary.principalB)} · 占比 ${principalShareB.toFixed(2)}%`
+    `${summary.memberBName}本金：${formatCurrency(summary.principalB)} · 占比 ${principalShareB.toFixed(2)}% · 归属持仓 ${formatCurrency(summary.assignedAssetB)}`
   );
   setPositiveNegative(byId("op-total-profit-chip"), totalProfit);
 
@@ -809,15 +1011,11 @@ function renderOperationSummary(state) {
     progressFill.style.width = `${Math.max(0, Math.min(100, principalRatio)).toFixed(2)}%`;
   }
 
-  const todayBaseline = state.dailyBaselines?.[dateKeyOf()] || {
-    totalAsset: summary.currentTotalAsset,
-    assetA: summary.assetA,
-    assetB: summary.assetB,
-  };
-  const todayTotalProfit = summary.currentTotalAsset - number(todayBaseline.totalAsset);
-  const todayAProfit = summary.assetA - number(todayBaseline.assetA);
-  const todayBProfit = summary.assetB - number(todayBaseline.assetB);
-  const todayBaseAsset = number(todayBaseline.totalAsset);
+  const todayBaseline = getTodayProfitBaseline(state, summary);
+  const todayTotalProfit = summary.totalProfit - number(todayBaseline.totalProfit);
+  const todayAProfit = summary.memberTotalProfitA - number(todayBaseline.memberTotalProfitA);
+  const todayBProfit = summary.memberTotalProfitB - number(todayBaseline.memberTotalProfitB);
+  const todayBaseAsset = number(todayBaseline.profitBaseAsset);
   const todayRate = todayBaseAsset > 0 ? (todayTotalProfit / todayBaseAsset) * 100 : 0;
 
   setText("op-today-total-chip", `今日收益：${formatCurrency(todayTotalProfit)} · ${todayRate.toFixed(2)}%`);
@@ -827,28 +1025,37 @@ function renderOperationSummary(state) {
   setPositiveNegative(byId("op-today-a-chip"), todayAProfit);
   setPositiveNegative(byId("op-today-b-chip"), todayBProfit);
 
-  const holdingValue = Math.max(0, summary.holdingMarketValueTotal);
+  const stockValue = Math.max(0, summary.stockMarketValueTotal);
+  const fundValue = Math.max(0, summary.fundMarketValueTotal);
   const cashValue = Math.max(0, number(state.cashAmount));
-  const structureBase = holdingValue + cashValue;
-  const holdingShare = structureBase > 0 ? (holdingValue / structureBase) * 100 : 0;
+  const structureBase = stockValue + fundValue + cashValue;
+  const stockShare = structureBase > 0 ? (stockValue / structureBase) * 100 : 0;
+  const fundShare = structureBase > 0 ? (fundValue / structureBase) * 100 : 0;
   const cashShare = structureBase > 0 ? (cashValue / structureBase) * 100 : 0;
 
-  setText("op-structure-holding-line", `持仓：${formatCurrency(holdingValue)} · ${holdingShare.toFixed(2)}%`);
+  setText("op-structure-stock-line", `股票：${formatCurrency(stockValue)} · ${stockShare.toFixed(2)}%`);
+  setText("op-structure-fund-line", `基金：${formatCurrency(fundValue)} · ${fundShare.toFixed(2)}%`);
   setText("op-structure-cash-line", `现金：${formatCurrency(cashValue)} · ${cashShare.toFixed(2)}%`);
 
-  const structureHoldingBar = byId("op-structure-holding-bar");
+  const structureStockBar = byId("op-structure-stock-bar");
+  const structureFundBar = byId("op-structure-fund-bar");
   const structureCashBar = byId("op-structure-cash-bar");
-  if (structureHoldingBar) structureHoldingBar.style.width = `${Math.max(0, Math.min(100, holdingShare)).toFixed(2)}%`;
+  if (structureStockBar) structureStockBar.style.width = `${Math.max(0, Math.min(100, stockShare)).toFixed(2)}%`;
+  if (structureFundBar) structureFundBar.style.width = `${Math.max(0, Math.min(100, fundShare)).toFixed(2)}%`;
   if (structureCashBar) structureCashBar.style.width = `${Math.max(0, Math.min(100, cashShare)).toFixed(2)}%`;
+  setText("op-estimated-total-line", `估算总资产(股票+基金+现金)：${formatCurrency(summary.estimatedTotal)}`);
+  setText("op-estimated-gap-line", `与当前总资产差额：${formatCurrency(summary.gap)}（股票侧差额：${formatCurrency(summary.stockGap)}）`);
+  setPositiveNegative(byId("op-estimated-gap-line"), -summary.gap);
 
   const holdingsCount = summary.holdingsWithCalc.length;
   const logsCount = Array.isArray(state.logs) ? state.logs.length : 0;
   const snapshotsCount = Array.isArray(state.snapshots) ? state.snapshots.length : 0;
-  setText("op-meta-holdings", `持仓数：${holdingsCount}`);
+  setText("op-meta-holdings", `资产条目：${holdingsCount}（股${summary.stockHoldingCount} / 基${summary.fundHoldingCount}）`);
   setText("op-meta-logs", `历史条数：${logsCount}`);
   setText("op-meta-snapshots", `快照点：${snapshotsCount}`);
 
   renderOperationTargetOptions(state);
+  renderHoldingOwnerOptions(state);
   renderOperationPreview(state);
   renderHistory("history-body-operation", state.logs || []);
 }
@@ -909,15 +1116,21 @@ function syncOperationAndSave({ notice = "已保存", logEntry = null } = {}) {
 }
 
 async function refreshQuoteForEditorRow(row, { silent = false } = {}) {
+  const assetType = row.dataset.assetType || "stock";
   const codeInput = row.querySelector('[data-field="code"]');
   const nameInput = row.querySelector('[data-field="name"]');
   const priceInput = row.querySelector('[data-field="currentPrice"]');
   const button = row.querySelector(".quote-refresh");
 
+  if (assetType !== "stock") {
+    if (!silent) showSaveStatus("基金暂不支持自动行情，请手动维护当前净值");
+    return { ok: false, skipped: true };
+  }
+
   const symbol = toTencentSymbol(codeInput.value);
   if (!symbol) {
     if (!silent) showSaveStatus("股票代码格式不正确，示例：300807 或 sz300807");
-    return false;
+    return { ok: false, skipped: false };
   }
 
   const originalText = button.textContent;
@@ -931,10 +1144,10 @@ async function refreshQuoteForEditorRow(row, { silent = false } = {}) {
     }
     priceInput.value = quote.price;
     updateEditorHoldingComputed();
-    return true;
+    return { ok: true, skipped: false };
   } catch {
     if (!silent) showSaveStatus(`获取 ${symbol} 行情失败`);
-    return false;
+    return { ok: false, skipped: false };
   } finally {
     button.disabled = false;
     button.textContent = originalText;
@@ -1033,8 +1246,10 @@ function bindOperationEvents() {
   if (!byId("operation-page")) return;
 
   const form = byId("ledger-form");
-  const holdingsBody = byId("holdings-editor-body");
-  const addHoldingBtn = byId("add-holding");
+  const stockBody = byId("stock-editor-body");
+  const fundBody = byId("fund-editor-body");
+  const addStockBtn = byId("add-stock");
+  const addFundBtn = byId("add-fund");
   const refreshQuotesBtn = byId("refresh-quotes");
   const capitalForm = byId("capital-form");
   const clearHistoryBtn = byId("clear-history");
@@ -1051,11 +1266,16 @@ function bindOperationEvents() {
     syncOperationAndSave({ notice: "自动保存" });
   });
 
-  holdingsBody?.addEventListener("input", () => {
+  const onAssetRowsInput = () => {
     syncOperationAndSave({ notice: "持仓已更新" });
-  });
+  };
 
-  holdingsBody?.addEventListener("click", async (event) => {
+  stockBody?.addEventListener("input", onAssetRowsInput);
+  fundBody?.addEventListener("input", onAssetRowsInput);
+  stockBody?.addEventListener("change", onAssetRowsInput);
+  fundBody?.addEventListener("change", onAssetRowsInput);
+
+  stockBody?.addEventListener("click", async (event) => {
     const button = event.target.closest("button");
     if (!button) return;
 
@@ -1072,8 +1292,8 @@ function bindOperationEvents() {
       const row = button.closest("tr");
       if (!row) return;
       const symbol = toTencentSymbol(row.querySelector('[data-field="code"]').value) || "未知代码";
-      const ok = await refreshQuoteForEditorRow(row);
-      if (ok) {
+      const result = await refreshQuoteForEditorRow(row);
+      if (result.ok) {
         syncOperationAndSave({
           notice: "实时行情已更新",
           logEntry: { type: "行情刷新", detail: `更新 ${symbol} 实时价格` },
@@ -1082,9 +1302,22 @@ function bindOperationEvents() {
     }
   });
 
-  addHoldingBtn?.addEventListener("click", () => {
+  fundBody?.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+
+    if (button.classList.contains("remove")) {
+      button.closest("tr")?.remove();
+      syncOperationAndSave({
+        notice: "已删除基金并保存",
+        logEntry: { type: "持仓变更", detail: "删除一条基金记录" },
+      });
+    }
+  });
+
+  addStockBtn?.addEventListener("click", () => {
     const partial = collectOperationSnapshotFromDom(appState);
-    partial.holdings.push(createHoldingRowTemplate());
+    partial.holdings.push(createHoldingRowTemplate("stock"));
 
     appState = {
       ...appState,
@@ -1094,15 +1327,32 @@ function bindOperationEvents() {
 
     renderEditorHoldingRows(appState.holdings);
     syncOperationAndSave({
-      notice: "已新增持仓行",
-      logEntry: { type: "持仓变更", detail: "新增一条持仓记录" },
+      notice: "已新增股票行",
+      logEntry: { type: "持仓变更", detail: "新增一条股票记录" },
+    });
+  });
+
+  addFundBtn?.addEventListener("click", () => {
+    const partial = collectOperationSnapshotFromDom(appState);
+    partial.holdings.push(createHoldingRowTemplate("fund"));
+
+    appState = {
+      ...appState,
+      ...partial,
+      updatedAt: new Date().toISOString(),
+    };
+
+    renderEditorHoldingRows(appState.holdings);
+    syncOperationAndSave({
+      notice: "已新增基金行",
+      logEntry: { type: "持仓变更", detail: "新增一条基金记录" },
     });
   });
 
   refreshQuotesBtn?.addEventListener("click", async () => {
-    const rows = [...(holdingsBody?.querySelectorAll("tr") || [])];
+    const rows = [...(stockBody?.querySelectorAll("tr") || [])];
     if (!rows.length) {
-      showSaveStatus("暂无持仓可刷新");
+      showSaveStatus("暂无股票可刷新");
       return;
     }
 
@@ -1111,12 +1361,15 @@ function bindOperationEvents() {
     refreshQuotesBtn.textContent = "刷新中...";
 
     let successCount = 0;
+    let skippedCount = 0;
     let failedCount = 0;
 
     for (const row of rows) {
-      const ok = await refreshQuoteForEditorRow(row, { silent: true });
-      if (ok) {
+      const result = await refreshQuoteForEditorRow(row, { silent: true });
+      if (result.ok) {
         successCount += 1;
+      } else if (result.skipped) {
+        skippedCount += 1;
       } else {
         failedCount += 1;
       }
@@ -1125,11 +1378,13 @@ function bindOperationEvents() {
     syncOperationAndSave({
       notice:
         failedCount === 0
-          ? `实时行情刷新完成：${successCount} 条`
-          : `实时行情刷新完成：成功 ${successCount}，失败 ${failedCount}`,
+          ? skippedCount === 0
+            ? `实时行情刷新完成：${successCount} 条`
+            : `实时行情刷新完成：成功 ${successCount}，跳过 ${skippedCount}`
+          : `实时行情刷新完成：成功 ${successCount}，失败 ${failedCount}，跳过 ${skippedCount}`,
       logEntry: {
         type: "行情刷新",
-        detail: `批量刷新：成功 ${successCount}，失败 ${failedCount}`,
+        detail: `股票批量刷新：成功 ${successCount}，失败 ${failedCount}，跳过 ${skippedCount}`,
       },
     });
 

@@ -335,7 +335,7 @@ button.calc-toggle:focus-visible {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 980px;
+  min-width: 1160px;
 }
 
 table.history-table {
@@ -359,6 +359,15 @@ th {
 }
 
 td input {
+  width: 100%;
+  border: 1px solid rgba(30, 33, 36, 0.13);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+td select {
   width: 100%;
   border: 1px solid rgba(30, 33, 36, 0.13);
   border-radius: 9px;
@@ -526,6 +535,13 @@ button.quote-refresh {
   font-size: 0.85rem;
 }
 
+#op-stock-snapshot-line,
+#op-total-asset-formula {
+  margin: 0;
+  font-size: 0.83rem;
+  color: #3f4954;
+}
+
 #op-total-profit-chip {
   padding: 4px 8px;
   border-radius: 999px;
@@ -602,7 +618,7 @@ button.quote-refresh {
 
 .overview-structure-lines {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -630,12 +646,30 @@ button.quote-refresh {
   transition: width 220ms ease;
 }
 
-#op-structure-holding-bar {
+#op-structure-stock-bar {
   background: linear-gradient(120deg, #1c63e0, #6fa6ff);
+}
+
+#op-structure-fund-bar {
+  background: linear-gradient(120deg, #17a36a, #61d3a4);
 }
 
 #op-structure-cash-bar {
   background: linear-gradient(120deg, #d15d1c, #ecb267);
+}
+
+.overview-estimate {
+  display: grid;
+  gap: 6px;
+}
+
+.overview-estimate p {
+  margin: 0;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(24, 28, 34, 0.1);
+  background: rgba(255, 255, 255, 0.76);
+  font-size: 0.84rem;
 }
 
 .overview-meta {
@@ -835,7 +869,7 @@ button.quote-refresh {
 
 .structure-head {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   color: #2f3742;
   font-size: 0.88rem;
@@ -864,8 +898,12 @@ button.quote-refresh {
   transition: width 220ms ease;
 }
 
-#structure-holding-bar {
+#structure-stock-bar {
   background: linear-gradient(120deg, #1c63e0, #6ca1ff);
+}
+
+#structure-fund-bar {
+  background: linear-gradient(120deg, #17a36a, #61d3a4);
 }
 
 #structure-cash-bar {
@@ -895,6 +933,10 @@ button.quote-refresh {
 .structure-badges p.negative {
   border-color: rgba(184, 31, 31, 0.24);
   background: rgba(184, 31, 31, 0.08);
+}
+
+#structure-owner-badge {
+  grid-column: 1 / -1;
 }
 
 .positive {

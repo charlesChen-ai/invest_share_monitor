@@ -34,6 +34,7 @@
         <article class="card strong reveal delay-2">
             <p class="label">当前总资产</p>
             <h2 id="current-asset">¥0.00</h2>
+            <p class="hint" id="current-asset-composition-hint">总资产 = 股票资产快照 + 基金市值</p>
             <p class="hint" id="total-principal-hint">总本金：¥0.00</p>
             <div class="split-lines">
               <p id="member-a-principal-line">曾本金：¥0.00</p>
@@ -74,16 +75,19 @@
             <div class="asset-structure">
               <p class="label">资金结构</p>
               <div class="structure-head">
-                <p id="structure-holding-line">持仓：¥0.00 · 0.00%</p>
+                <p id="structure-stock-line">股票：¥0.00 · 0.00%</p>
+                <p id="structure-fund-line">基金：¥0.00 · 0.00%</p>
                 <p id="structure-cash-line">现金：¥0.00 · 0.00%</p>
               </div>
               <div class="structure-bar">
-                <i id="structure-holding-bar"></i>
+                <i id="structure-stock-bar"></i>
+                <i id="structure-fund-bar"></i>
                 <i id="structure-cash-bar"></i>
               </div>
               <div class="structure-badges">
                 <p id="structure-profit-badge">累计收益：¥0.00</p>
                 <p id="structure-state-badge">净值状态：平稳</p>
+                <p id="structure-owner-badge">归属持仓：曾 ¥0.00 · 陈 ¥0.00</p>
               </div>
             </div>
         </article>
@@ -162,20 +166,22 @@
       <section class="card reveal delay-6">
         <div class="section-head">
           <h3>持仓记录</h3>
-          <p>展示当前保存的数据（如需编辑请前往操作页）。</p>
+          <p>展示当前保存的股票/基金数据（如需编辑请前往操作页）。</p>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>股票代码</th>
-                <th>股票名称</th>
-                <th>持仓数量</th>
-                <th>买入均价</th>
-                <th>当前市价</th>
+                <th>资产类型</th>
+                <th>代码</th>
+                <th>资产名称</th>
+                <th>份额/股数</th>
+                <th>买入净值/均价</th>
+                <th>当前净值/市价</th>
                 <th>持仓市值</th>
                 <th>持仓成本</th>
                 <th>浮动盈亏</th>
+                <th>归属</th>
               </tr>
             </thead>
             <tbody id="dashboard-holdings-body"></tbody>
@@ -185,7 +191,11 @@
 
       <section class="grid-2">
         <article class="card reveal delay-7">
-          <p class="label">现金与估算</p>
+          <p class="label">总资产演示</p>
+          <div class="split-lines">
+            <p id="stock-total-line">股票市值：¥0.00</p>
+            <p id="fund-total-line">基金市值：¥0.00</p>
+          </div>
           <p id="cash-line">持有现金：¥0.00</p>
           <div class="calc-group">
             <button id="holding-total-line" class="calc-toggle" type="button" data-formula-id="holding-total-formula" aria-expanded="false">
@@ -198,6 +208,11 @@
               持仓+现金：¥0.00
             </button>
             <p id="estimated-total-formula" class="calc-formula">点击上方查看计算方式</p>
+          </div>
+          <p class="label">按归属汇总</p>
+          <div class="split-lines">
+            <p id="owner-a-summary-line">曾归属资产：¥0.00</p>
+            <p id="owner-b-summary-line">陈归属资产：¥0.00</p>
           </div>
         </article>
 
@@ -215,6 +230,7 @@
 
     </main>
 
+    <script src="./storage.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
