@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>权益投资记录账本</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Outfit:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <main class="page">
+      <header class="hero reveal delay-1">
+        <div>
+          <p class="eyebrow">Shared Wealth Journal</p>
+          <h1>权益投资记录账本</h1>
+          <p class="subtitle">用于共享本金、净值、持仓和收益变化。所有更新会自动保存在当前浏览器。</p>
+        </div>
+        <div class="stamp">
+          <span>更新时间</span>
+          <strong id="updated-at-text">-</strong>
+        </div>
+      </header>
+
+      <section class="grid-2">
+        <article class="card reveal delay-2">
+          <p class="label">基础权益记录</p>
+          <h2 id="total-principal">¥0.00</h2>
+          <p class="hint">总本金</p>
+          <div class="split-lines">
+            <p id="member-a-principal-line">曾本金：¥0.00</p>
+            <p id="member-b-principal-line">陈本金：¥0.00</p>
+          </div>
+        </article>
+
+        <article class="card strong reveal delay-3">
+          <p class="label">当前净值</p>
+          <h2 id="current-asset">¥0.00</h2>
+          <p id="net-value-line" class="formula">当前净值：0.0000</p>
+        </article>
+      </section>
+
+      <section class="grid-2">
+        <article class="card reveal delay-4">
+          <div class="section-head">
+            <h3>资产分配</h3>
+            <p>资产 = 当前净值 × 本金</p>
+          </div>
+          <div class="split-lines">
+            <p id="member-a-asset-line">曾资产：¥0.00</p>
+            <p id="member-b-asset-line">陈资产：¥0.00</p>
+          </div>
+        </article>
+
+        <article class="card reveal delay-5">
+          <div class="section-head">
+            <h3>收益计算</h3>
+            <p>收益 = 当前资产 - 投入本金</p>
+          </div>
+          <div class="split-lines">
+            <p id="member-a-profit-line">曾收益：¥0.00</p>
+            <p id="member-b-profit-line">陈收益：¥0.00</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="card reveal delay-6">
+        <div class="section-head">
+          <h3>持仓记录（支持实时价）</h3>
+          <p>输入股票代码后可拉取实时市价。买入均价与持仓数量仍由你手动维护。</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>股票代码</th>
+                <th>股票名称</th>
+                <th>持仓数量</th>
+                <th>买入均价</th>
+                <th>当前市价</th>
+                <th>持仓市值</th>
+                <th>持仓成本</th>
+                <th>浮动盈亏</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="holdings-body"></tbody>
+          </table>
+        </div>
+        <div class="actions">
+          <button id="refresh-quotes" type="button" class="ghost">刷新全部实时价</button>
+          <button id="add-holding" type="button" class="ghost">+ 添加持仓</button>
+        </div>
+      </section>
+
+      <section class="grid-2">
+        <article class="card reveal delay-7">
+          <p class="label">现金与估算</p>
+          <p id="cash-line">持有现金：¥0.00</p>
+          <p id="holding-total-line">持仓市值合计：¥0.00</p>
+          <p id="estimated-total-line" class="formula">持仓+现金：¥0.00</p>
+        </article>
+
+        <article class="card reveal delay-8">
+          <p class="label">账户校验</p>
+          <p id="gap-line" class="formula">账户总资产 - (持仓+现金)：¥0.00</p>
+          <p class="hint">如果差额不为 0，通常表示有其他资产、在途资金或录入误差。</p>
+        </article>
+      </section>
+
+      <section class="card editor reveal delay-9">
+        <div class="section-head">
+          <h3>账本编辑区</h3>
+          <p>修改后自动保存，下次打开会保留数据。</p>
+        </div>
+
+        <form id="ledger-form">
+          <div class="editor-grid">
+            <label>
+              成员 A 名称
+              <input id="member-a-name" type="text" />
+            </label>
+            <label>
+              成员 A 本金 (RMB)
+              <input id="member-a-principal" type="number" min="0" step="0.01" />
+            </label>
+            <label>
+              成员 B 名称
+              <input id="member-b-name" type="text" />
+            </label>
+            <label>
+              成员 B 本金 (RMB)
+              <input id="member-b-principal" type="number" min="0" step="0.01" />
+            </label>
+            <label>
+              当前总资产 (RMB)
+              <input id="current-total-asset" type="number" min="0" step="0.01" />
+            </label>
+            <label>
+              持有现金 (RMB)
+              <input id="cash-amount" type="number" min="0" step="0.01" />
+            </label>
+            <label>
+              更新时间
+              <input id="updated-at" type="datetime-local" />
+            </label>
+          </div>
+          <div class="actions">
+            <button id="set-now" type="button" class="ghost">使用当前时间</button>
+            <button id="save-btn" type="submit">保存快照</button>
+          </div>
+          <p id="save-status" class="status">已载入本地数据</p>
+        </form>
+      </section>
+
+      <section class="card reveal delay-10">
+        <div class="section-head">
+          <h3>转出资金（提现）</h3>
+          <p>按当前净值折算本金，确保收益计算连续。</p>
+        </div>
+        <form id="withdraw-form">
+          <div class="editor-grid">
+            <label>
+              转出金额 (RMB)
+              <input id="withdraw-amount" type="number" min="0" step="0.01" placeholder="0.00" />
+            </label>
+            <label>
+              转出归属
+              <select id="withdraw-target">
+                <option value="proportional">按双方本金比例</option>
+                <option value="memberA">成员 A</option>
+                <option value="memberB">成员 B</option>
+              </select>
+            </label>
+            <label>
+              转出时间
+              <input id="withdraw-at" type="datetime-local" />
+            </label>
+            <label>
+              备注
+              <input id="withdraw-note" type="text" placeholder="可选备注" />
+            </label>
+          </div>
+          <div class="actions">
+            <button id="withdraw-now" type="button" class="ghost">提现时间用当前</button>
+            <button id="apply-withdraw" type="submit">执行转出</button>
+          </div>
+          <p id="withdraw-preview" class="hint">规则：转出金额 ÷ 当前净值 = 需要减少的本金份额</p>
+        </form>
+      </section>
+
+      <section class="card reveal delay-11">
+        <div class="section-head">
+          <h3>操作历史</h3>
+          <p>记录手动保存、行情刷新、转出资金等关键操作。</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>操作</th>
+                <th>详情</th>
+              </tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+          </table>
+        </div>
+        <div class="actions">
+          <button id="clear-history" type="button" class="ghost">清空历史</button>
+        </div>
+      </section>
+    </main>
+
+    <template id="holding-row-template">
+      <tr>
+        <td><input data-field="code" type="text" placeholder="300807" /></td>
+        <td><input data-field="name" type="text" placeholder="天迈科技" /></td>
+        <td><input data-field="quantity" type="number" min="0" step="1" placeholder="0" /></td>
+        <td><input data-field="avgCost" type="number" min="0" step="0.001" placeholder="0" /></td>
+        <td><input data-field="currentPrice" type="number" min="0" step="0.001" placeholder="0" /></td>
+        <td data-field="marketValue">¥0.00</td>
+        <td data-field="costValue">¥0.00</td>
+        <td data-field="pnl">¥0.00</td>
+        <td>
+          <div class="row-actions">
+            <button type="button" class="quote-refresh">实时价</button>
+            <button type="button" class="remove">删除</button>
+          </div>
+        </td>
+      </tr>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

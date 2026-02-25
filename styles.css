@@ -1,0 +1,391 @@
+:root {
+  --bg-a: #f7f3ea;
+  --bg-b: #e7f2f8;
+  --paper: rgba(255, 255, 255, 0.88);
+  --ink: #1e2124;
+  --muted: #57606a;
+  --line: rgba(30, 33, 36, 0.14);
+  --accent-a: #0457d1;
+  --accent-b: #c74a02;
+  --rise: #11733e;
+  --fall: #b81f1f;
+  --shadow: 0 18px 42px rgba(26, 30, 35, 0.12);
+  --radius: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Outfit", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(4, 87, 209, 0.14), transparent 34%),
+    radial-gradient(circle at 90% 2%, rgba(199, 74, 2, 0.12), transparent 36%),
+    linear-gradient(145deg, var(--bg-a), var(--bg-b));
+  padding: 28px 14px 44px;
+}
+
+.noise {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(rgba(30, 33, 36, 0.03) 0.6px, transparent 0.6px);
+  background-size: 5px 5px;
+}
+
+.page {
+  max-width: 1150px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 2px;
+}
+
+.eyebrow {
+  margin: 0;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: "Noto Serif SC", serif;
+}
+
+h1 {
+  font-size: clamp(1.7rem, 2.8vw, 2.7rem);
+  margin-top: 10px;
+}
+
+h2 {
+  font-size: clamp(1.4rem, 2.2vw, 2.15rem);
+  margin-top: 8px;
+}
+
+h3 {
+  font-size: clamp(1.1rem, 1.5vw, 1.45rem);
+}
+
+.subtitle {
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.stamp {
+  min-width: 170px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.65);
+  display: grid;
+  gap: 3px;
+}
+
+.stamp span {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  backdrop-filter: blur(6px);
+}
+
+.strong {
+  background:
+    linear-gradient(152deg, rgba(4, 87, 209, 0.14), rgba(255, 255, 255, 0.88) 60%),
+    var(--paper);
+}
+
+.label {
+  margin: 0;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.split-lines {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.split-lines p {
+  margin: 0;
+}
+
+.section-head {
+  display: grid;
+  gap: 5px;
+}
+
+.section-head p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.formula {
+  margin: 10px 0 0;
+  font-weight: 600;
+}
+
+.table-wrap {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+}
+
+th,
+td {
+  padding: 9px 8px;
+  border-bottom: 1px solid rgba(30, 33, 36, 0.09);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+td input {
+  width: 100%;
+  border: 1px solid rgba(30, 33, 36, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.editor-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  font-weight: 600;
+}
+
+label input {
+  border: 1px solid rgba(30, 33, 36, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+}
+
+label select {
+  border: 1px solid rgba(30, 33, 36, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+}
+
+input:focus {
+  outline: 2px solid rgba(4, 87, 209, 0.35);
+  outline-offset: 1px;
+}
+
+.actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(118deg, var(--accent-a), var(--accent-b));
+  cursor: pointer;
+}
+
+button.ghost {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+}
+
+button.remove {
+  padding: 8px 10px;
+  color: #8b1f1f;
+  background: rgba(184, 31, 31, 0.08);
+  border: 1px solid rgba(184, 31, 31, 0.2);
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+button.quote-refresh {
+  padding: 8px 10px;
+  color: var(--ink);
+  background: rgba(4, 87, 209, 0.08);
+  border: 1px solid rgba(4, 87, 209, 0.25);
+}
+
+.status {
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.positive {
+  color: var(--rise);
+}
+
+.negative {
+  color: var(--fall);
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: appear 500ms forwards;
+}
+
+.delay-1 {
+  animation-delay: 70ms;
+}
+
+.delay-2 {
+  animation-delay: 110ms;
+}
+
+.delay-3 {
+  animation-delay: 150ms;
+}
+
+.delay-4 {
+  animation-delay: 180ms;
+}
+
+.delay-5 {
+  animation-delay: 220ms;
+}
+
+.delay-6 {
+  animation-delay: 260ms;
+}
+
+.delay-7 {
+  animation-delay: 300ms;
+}
+
+.delay-8 {
+  animation-delay: 330ms;
+}
+
+.delay-9 {
+  animation-delay: 360ms;
+}
+
+.delay-10 {
+  animation-delay: 390ms;
+}
+
+.delay-11 {
+  animation-delay: 420ms;
+}
+
+@keyframes appear {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 980px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 18px 10px 30px;
+  }
+
+  .card {
+    border-radius: 16px;
+    padding: 14px;
+  }
+
+  .editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  button {
+    width: 100%;
+  }
+
+  .row-actions button {
+    width: auto;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+}
