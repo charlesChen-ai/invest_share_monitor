@@ -175,6 +175,10 @@ table {
   min-width: 980px;
 }
 
+table.history-table {
+  min-width: 620px;
+}
+
 th,
 td {
   padding: 9px 8px;

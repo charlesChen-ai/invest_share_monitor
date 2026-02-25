@@ -1,10 +1,21 @@
 const STORAGE_KEY = "equity_ledger_rmb_v2";
+const MAX_LOG_ENTRIES = 300;
 
 function uid() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
     return globalThis.crypto.randomUUID();
   }
   return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function round(value, precision = 4) {
+  const factor = 10 ** precision;
+  return Math.round(number(value) * factor) / factor;
+}
+
+function number(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function createDefaultState() {
@@ -24,6 +35,14 @@ function createDefaultState() {
         quantity: 3100,
         avgCost: 52.598,
         currentPrice: 55.1,
+      },
+    ],
+    logs: [
+      {
+        id: uid(),
+        at: "2026-02-25T12:41:00",
+        type: "初始化",
+        detail: "创建账本示例数据",
       },
     ],
   };
@@ -46,11 +65,16 @@ const ui = {
   gapLine: document.getElementById("gap-line"),
   saveStatus: document.getElementById("save-status"),
   holdingsBody: document.getElementById("holdings-body"),
+  historyBody: document.getElementById("history-body"),
   holdingRowTemplate: document.getElementById("holding-row-template"),
   refreshQuotesBtn: document.getElementById("refresh-quotes"),
   addHoldingBtn: document.getElementById("add-holding"),
   setNowBtn: document.getElementById("set-now"),
+  clearHistoryBtn: document.getElementById("clear-history"),
   form: document.getElementById("ledger-form"),
+  withdrawForm: document.getElementById("withdraw-form"),
+  withdrawPreview: document.getElementById("withdraw-preview"),
+  withdrawNowBtn: document.getElementById("withdraw-now"),
   inputs: {
     memberAName: document.getElementById("member-a-name"),
     memberAPrincipal: document.getElementById("member-a-principal"),
@@ -60,12 +84,13 @@ const ui = {
     cashAmount: document.getElementById("cash-amount"),
     updatedAt: document.getElementById("updated-at"),
   },
+  withdrawInputs: {
+    amount: document.getElementById("withdraw-amount"),
+    target: document.getElementById("withdraw-target"),
+    at: document.getElementById("withdraw-at"),
+    note: document.getElementById("withdraw-note"),
+  },
 };
-
-function number(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function formatCurrency(value) {
   return new Intl.NumberFormat("zh-CN", {
@@ -183,16 +208,17 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return createDefaultState();
+
     const parsed = JSON.parse(raw);
     const defaults = createDefaultState();
-    const merged = {
+
+    return {
       ...defaults,
       ...parsed,
       members: parsed.members?.length === 2 ? parsed.members : defaults.members,
       holdings: Array.isArray(parsed.holdings) ? parsed.holdings : defaults.holdings,
+      logs: Array.isArray(parsed.logs) ? parsed.logs : defaults.logs,
     };
-
-    return merged;
   } catch {
     return createDefaultState();
   }
@@ -213,90 +239,43 @@ function createEmptyHolding() {
   };
 }
 
-function renderHoldingRows(holdings) {
-  ui.holdingsBody.innerHTML = "";
-
-  holdings.forEach((holding) => {
-    const fragment = ui.holdingRowTemplate.content.cloneNode(true);
-    const row = fragment.querySelector("tr");
-    row.dataset.id = holding.id || uid();
-
-    row.querySelector('[data-field="code"]').value = holding.code || "";
-    row.querySelector('[data-field="name"]').value = holding.name || "";
-    row.querySelector('[data-field="quantity"]').value = number(holding.quantity);
-    row.querySelector('[data-field="avgCost"]').value = number(holding.avgCost);
-    row.querySelector('[data-field="currentPrice"]').value = number(holding.currentPrice);
-
-    ui.holdingsBody.appendChild(fragment);
-  });
-
-  updateHoldingRowsComputed();
-}
-
-function holdingsFromDom() {
-  return [...ui.holdingsBody.querySelectorAll("tr")].map((row) => ({
-    id: row.dataset.id || uid(),
-    code: row.querySelector('[data-field="code"]').value.trim(),
-    name: row.querySelector('[data-field="name"]').value.trim(),
-    quantity: number(row.querySelector('[data-field="quantity"]').value),
-    avgCost: number(row.querySelector('[data-field="avgCost"]').value),
-    currentPrice: number(row.querySelector('[data-field="currentPrice"]').value),
-  }));
-}
-
-function updateHoldingRowsComputed() {
-  [...ui.holdingsBody.querySelectorAll("tr")].forEach((row) => {
-    const quantity = number(row.querySelector('[data-field="quantity"]').value);
-    const avgCost = number(row.querySelector('[data-field="avgCost"]').value);
-    const currentPrice = number(row.querySelector('[data-field="currentPrice"]').value);
-
-    const marketValue = quantity * currentPrice;
-    const costValue = quantity * avgCost;
-    const pnl = marketValue - costValue;
-
-    row.querySelector('[data-field="marketValue"]').textContent = formatCurrency(marketValue);
-    row.querySelector('[data-field="costValue"]').textContent = formatCurrency(costValue);
-
-    const pnlCell = row.querySelector('[data-field="pnl"]');
-    pnlCell.textContent = formatCurrency(pnl);
-    pnlCell.classList.toggle("positive", pnl >= 0);
-    pnlCell.classList.toggle("negative", pnl < 0);
-  });
-}
-
-function collectStateFromDom() {
-  const members = [
+function addLog(state, { type, detail, at }) {
+  state.logs = [
     {
-      name: ui.inputs.memberAName.value.trim() || "成员A",
-      principal: number(ui.inputs.memberAPrincipal.value),
+      id: uid(),
+      at: at || new Date().toISOString(),
+      type,
+      detail,
     },
-    {
-      name: ui.inputs.memberBName.value.trim() || "成员B",
-      principal: number(ui.inputs.memberBPrincipal.value),
-    },
-  ];
-
-  const updatedAtInput = ui.inputs.updatedAt.value;
-
-  return {
-    members,
-    currentTotalAsset: number(ui.inputs.currentTotalAsset.value),
-    cashAmount: number(ui.inputs.cashAmount.value),
-    updatedAt: updatedAtInput ? new Date(updatedAtInput).toISOString() : null,
-    holdings: holdingsFromDom(),
-  };
+    ...(state.logs || []),
+  ].slice(0, MAX_LOG_ENTRIES);
 }
 
-function fillEditor(state) {
-  ui.inputs.memberAName.value = state.members[0]?.name || "";
-  ui.inputs.memberAPrincipal.value = number(state.members[0]?.principal);
-  ui.inputs.memberBName.value = state.members[1]?.name || "";
-  ui.inputs.memberBPrincipal.value = number(state.members[1]?.principal);
-  ui.inputs.currentTotalAsset.value = number(state.currentTotalAsset);
-  ui.inputs.cashAmount.value = number(state.cashAmount);
-  ui.inputs.updatedAt.value = toDatetimeLocalValue(state.updatedAt);
+function renderHistory(logs) {
+  ui.historyBody.innerHTML = "";
 
-  renderHoldingRows(state.holdings);
+  if (!logs.length) {
+    const row = document.createElement("tr");
+    row.innerHTML = "<td>--</td><td>--</td><td>暂无操作记录</td>";
+    ui.historyBody.appendChild(row);
+    return;
+  }
+
+  logs.forEach((log) => {
+    const row = document.createElement("tr");
+    const timeCell = document.createElement("td");
+    const typeCell = document.createElement("td");
+    const detailCell = document.createElement("td");
+
+    timeCell.textContent = formatDate(log.at);
+    typeCell.textContent = log.type || "操作";
+    detailCell.textContent = log.detail || "";
+
+    row.appendChild(timeCell);
+    row.appendChild(typeCell);
+    row.appendChild(detailCell);
+    ui.historyBody.appendChild(row);
+  });
 }
 
 function computeSummary(state) {
@@ -315,23 +294,10 @@ function computeSummary(state) {
   const profitA = assetA - principalA;
   const profitB = assetB - principalB;
 
-  const holdingsWithCalc = state.holdings.map((h) => {
-    const quantity = number(h.quantity);
-    const avgCost = number(h.avgCost);
-    const currentPrice = number(h.currentPrice);
+  const holdingMarketValueTotal = (state.holdings || []).reduce((sum, h) => {
+    return sum + number(h.quantity) * number(h.currentPrice);
+  }, 0);
 
-    const marketValue = quantity * currentPrice;
-    const costValue = quantity * avgCost;
-
-    return {
-      ...h,
-      marketValue,
-      costValue,
-      pnl: marketValue - costValue,
-    };
-  });
-
-  const holdingMarketValueTotal = holdingsWithCalc.reduce((sum, h) => sum + h.marketValue, 0);
   const estimatedTotal = holdingMarketValueTotal + number(state.cashAmount);
   const gap = currentTotalAsset - estimatedTotal;
 
@@ -385,23 +351,164 @@ function renderSummary(state) {
 
   ui.gapLine.textContent = `账户总资产 - (持仓+现金)：${formatCurrency(summary.gap)}`;
   setProfitStyle(ui.gapLine, -summary.gap);
+
+  renderWithdrawPreview(state);
+}
+
+function renderHoldingRows(holdings) {
+  ui.holdingsBody.innerHTML = "";
+
+  holdings.forEach((holding) => {
+    const fragment = ui.holdingRowTemplate.content.cloneNode(true);
+    const row = fragment.querySelector("tr");
+    row.dataset.id = holding.id || uid();
+
+    row.querySelector('[data-field="code"]').value = holding.code || "";
+    row.querySelector('[data-field="name"]').value = holding.name || "";
+    row.querySelector('[data-field="quantity"]').value = number(holding.quantity);
+    row.querySelector('[data-field="avgCost"]').value = number(holding.avgCost);
+    row.querySelector('[data-field="currentPrice"]').value = number(holding.currentPrice);
+
+    ui.holdingsBody.appendChild(fragment);
+  });
+
+  updateHoldingRowsComputed();
+}
+
+function updateHoldingRowsComputed() {
+  [...ui.holdingsBody.querySelectorAll("tr")].forEach((row) => {
+    const quantity = number(row.querySelector('[data-field="quantity"]').value);
+    const avgCost = number(row.querySelector('[data-field="avgCost"]').value);
+    const currentPrice = number(row.querySelector('[data-field="currentPrice"]').value);
+
+    const marketValue = quantity * currentPrice;
+    const costValue = quantity * avgCost;
+    const pnl = marketValue - costValue;
+
+    row.querySelector('[data-field="marketValue"]').textContent = formatCurrency(marketValue);
+    row.querySelector('[data-field="costValue"]').textContent = formatCurrency(costValue);
+
+    const pnlCell = row.querySelector('[data-field="pnl"]');
+    pnlCell.textContent = formatCurrency(pnl);
+    pnlCell.classList.toggle("positive", pnl >= 0);
+    pnlCell.classList.toggle("negative", pnl < 0);
+  });
+}
+
+function holdingsFromDom() {
+  return [...ui.holdingsBody.querySelectorAll("tr")].map((row) => ({
+    id: row.dataset.id || uid(),
+    code: row.querySelector('[data-field="code"]').value.trim(),
+    name: row.querySelector('[data-field="name"]').value.trim(),
+    quantity: number(row.querySelector('[data-field="quantity"]').value),
+    avgCost: number(row.querySelector('[data-field="avgCost"]').value),
+    currentPrice: number(row.querySelector('[data-field="currentPrice"]').value),
+  }));
+}
+
+function collectStateFromDom() {
+  const members = [
+    {
+      name: ui.inputs.memberAName.value.trim() || "成员A",
+      principal: number(ui.inputs.memberAPrincipal.value),
+    },
+    {
+      name: ui.inputs.memberBName.value.trim() || "成员B",
+      principal: number(ui.inputs.memberBPrincipal.value),
+    },
+  ];
+
+  const updatedAtInput = ui.inputs.updatedAt.value;
+
+  return {
+    members,
+    currentTotalAsset: number(ui.inputs.currentTotalAsset.value),
+    cashAmount: number(ui.inputs.cashAmount.value),
+    updatedAt: updatedAtInput ? new Date(updatedAtInput).toISOString() : null,
+    holdings: holdingsFromDom(),
+  };
+}
+
+function fillEditor(state) {
+  ui.inputs.memberAName.value = state.members[0]?.name || "";
+  ui.inputs.memberAPrincipal.value = number(state.members[0]?.principal);
+  ui.inputs.memberBName.value = state.members[1]?.name || "";
+  ui.inputs.memberBPrincipal.value = number(state.members[1]?.principal);
+  ui.inputs.currentTotalAsset.value = number(state.currentTotalAsset);
+  ui.inputs.cashAmount.value = number(state.cashAmount);
+  ui.inputs.updatedAt.value = toDatetimeLocalValue(state.updatedAt);
+
+  renderHoldingRows(state.holdings || []);
+  syncWithdrawTargetOptions(state);
+
+  if (!ui.withdrawInputs.at.value) {
+    ui.withdrawInputs.at.value = toDatetimeLocalValue(new Date().toISOString());
+  }
+}
+
+function syncWithdrawTargetOptions(state) {
+  const memberAName = state.members[0]?.name || "成员A";
+  const memberBName = state.members[1]?.name || "成员B";
+
+  const options = ui.withdrawInputs.target.options;
+  if (options[1]) options[1].textContent = `${memberAName} 单独转出`;
+  if (options[2]) options[2].textContent = `${memberBName} 单独转出`;
+}
+
+function renderWithdrawPreview(state) {
+  const summary = computeSummary(state);
+  const amount = number(ui.withdrawInputs.amount.value);
+  const target = ui.withdrawInputs.target.value;
+
+  if (amount <= 0 || summary.totalPrincipal <= 0 || summary.currentTotalAsset <= 0 || summary.netValue <= 0) {
+    ui.withdrawPreview.textContent = "规则：转出金额 ÷ 当前净值 = 需要减少的本金份额";
+    return;
+  }
+
+  const principalCut = amount / summary.netValue;
+  let cutA = 0;
+  let cutB = 0;
+
+  if (target === "memberA") {
+    cutA = principalCut;
+  } else if (target === "memberB") {
+    cutB = principalCut;
+  } else {
+    const ratioA = summary.totalPrincipal > 0 ? summary.principalA / summary.totalPrincipal : 0;
+    cutA = principalCut * ratioA;
+    cutB = principalCut - cutA;
+  }
+
+  ui.withdrawPreview.textContent = `预览：转出 ${formatCurrency(amount)}，按净值 ${summary.netValue.toFixed(4)} 折算本金减少约 ${formatCurrency(principalCut)}（${summary.memberAName} ${formatCurrency(cutA)}，${summary.memberBName} ${formatCurrency(cutB)}）`;
 }
 
 let saveNoticeTimer;
+let appState = null;
 
 function showSaveStatus(text) {
   ui.saveStatus.textContent = text;
   clearTimeout(saveNoticeTimer);
   saveNoticeTimer = setTimeout(() => {
     ui.saveStatus.textContent = "数据已自动保存到本地";
-  }, 1000);
+  }, 1200);
 }
 
-function syncAndSave({ notice = "已保存" } = {}) {
-  const nextState = collectStateFromDom();
+function syncAndSave({ notice = "已保存", logEntry = null } = {}) {
+  const partial = collectStateFromDom();
+  appState = {
+    ...appState,
+    ...partial,
+  };
+
+  if (logEntry) {
+    addLog(appState, logEntry);
+  }
+
   updateHoldingRowsComputed();
-  renderSummary(nextState);
-  saveState(nextState);
+  syncWithdrawTargetOptions(appState);
+  renderSummary(appState);
+  renderHistory(appState.logs || []);
+  saveState(appState);
   showSaveStatus(notice);
 }
 
@@ -429,7 +536,7 @@ async function refreshQuoteForRow(row, { silent = false } = {}) {
     priceInput.value = quote.price;
     updateHoldingRowsComputed();
     return true;
-  } catch (error) {
+  } catch {
     if (!silent) showSaveStatus(`获取 ${symbol} 行情失败`);
     return false;
   } finally {
@@ -438,14 +545,97 @@ async function refreshQuoteForRow(row, { silent = false } = {}) {
   }
 }
 
+function applyWithdrawal() {
+  syncAndSave({ notice: "同步最新编辑数据" });
+
+  const amount = number(ui.withdrawInputs.amount.value);
+  const target = ui.withdrawInputs.target.value;
+  const note = ui.withdrawInputs.note.value.trim();
+  const at = ui.withdrawInputs.at.value ? new Date(ui.withdrawInputs.at.value).toISOString() : new Date().toISOString();
+
+  const summary = computeSummary(appState);
+
+  if (amount <= 0) {
+    showSaveStatus("转出金额必须大于 0");
+    return;
+  }
+
+  if (amount > summary.currentTotalAsset) {
+    showSaveStatus("转出金额不能超过当前总资产");
+    return;
+  }
+
+  if (summary.netValue <= 0 || summary.totalPrincipal <= 0) {
+    showSaveStatus("当前净值无效，无法按净值折算转出");
+    return;
+  }
+
+  const principalCut = amount / summary.netValue;
+
+  let cutA = 0;
+  let cutB = 0;
+
+  if (target === "memberA") {
+    const maxWithdraw = summary.assetA;
+    if (amount > maxWithdraw + 1e-8) {
+      showSaveStatus(`${summary.memberAName} 可转出上限为 ${formatCurrency(maxWithdraw)}`);
+      return;
+    }
+    cutA = principalCut;
+  } else if (target === "memberB") {
+    const maxWithdraw = summary.assetB;
+    if (amount > maxWithdraw + 1e-8) {
+      showSaveStatus(`${summary.memberBName} 可转出上限为 ${formatCurrency(maxWithdraw)}`);
+      return;
+    }
+    cutB = principalCut;
+  } else {
+    const ratioA = summary.totalPrincipal > 0 ? summary.principalA / summary.totalPrincipal : 0;
+    cutA = principalCut * ratioA;
+    cutB = principalCut - cutA;
+  }
+
+  const nextPrincipalA = Math.max(0, summary.principalA - cutA);
+  const nextPrincipalB = Math.max(0, summary.principalB - cutB);
+  const nextTotalAsset = Math.max(0, summary.currentTotalAsset - amount);
+
+  appState.members[0].principal = round(nextPrincipalA);
+  appState.members[1].principal = round(nextPrincipalB);
+  appState.currentTotalAsset = round(nextTotalAsset, 2);
+  appState.updatedAt = at;
+
+  addLog(appState, {
+    at,
+    type: "转出资金",
+    detail: `转出 ${formatCurrency(amount)}；归属：${target === "memberA" ? summary.memberAName : target === "memberB" ? summary.memberBName : "按本金比例"}；本金减少 ${formatCurrency(principalCut)}${note ? `；备注：${note}` : ""}`,
+  });
+
+  fillEditor(appState);
+  renderSummary(appState);
+  renderHistory(appState.logs || []);
+  saveState(appState);
+
+  ui.withdrawInputs.amount.value = "";
+  ui.withdrawInputs.note.value = "";
+
+  showSaveStatus("转出已执行并记录到历史");
+}
+
 function init() {
-  const state = loadState();
-  fillEditor(state);
-  renderSummary(state);
+  appState = loadState();
+  fillEditor(appState);
+  renderSummary(appState);
+  renderHistory(appState.logs || []);
 
   ui.form.addEventListener("submit", (event) => {
     event.preventDefault();
-    syncAndSave({ notice: "快照已保存" });
+    syncAndSave({
+      notice: "快照已保存",
+      logEntry: {
+        type: "手动保存",
+        detail: "点击保存快照",
+      },
+    });
   });
 
   ui.form.addEventListener("input", () => {
@@ -458,16 +648,29 @@ function init() {
 
     if (button.classList.contains("remove")) {
       button.closest("tr")?.remove();
-      syncAndSave({ notice: "已删除持仓并保存" });
+      syncAndSave({
+        notice: "已删除持仓并保存",
+        logEntry: {
+          type: "持仓变更",
+          detail: "删除一条持仓记录",
+        },
+      });
       return;
     }
 
     if (button.classList.contains("quote-refresh")) {
       const row = button.closest("tr");
       if (!row) return;
+      const symbol = toTencentSymbol(row.querySelector('[data-field="code"]').value) || "未知代码";
       const ok = await refreshQuoteForRow(row);
       if (ok) {
-        syncAndSave({ notice: "实时行情已更新" });
+        syncAndSave({
+          notice: "实时行情已更新",
+          logEntry: {
+            type: "行情刷新",
+            detail: `更新 ${symbol} 实时价格`,
+          },
+        });
       }
     }
   });
@@ -479,8 +682,15 @@ function init() {
   ui.addHoldingBtn.addEventListener("click", () => {
     const current = collectStateFromDom();
     current.holdings.push(createEmptyHolding());
-    renderHoldingRows(current.holdings);
-    syncAndSave({ notice: "已新增持仓行" });
+    appState = { ...appState, ...current };
+    renderHoldingRows(appState.holdings);
+    syncAndSave({
+      notice: "已新增持仓行",
+      logEntry: {
+        type: "持仓变更",
+        detail: "新增一条持仓记录",
+      },
+    });
   });
 
   ui.refreshQuotesBtn.addEventListener("click", async () => {
@@ -511,6 +721,10 @@ function init() {
         failedCount === 0
           ? `实时行情刷新完成：${successCount} 条`
           : `实时行情刷新完成：成功 ${successCount}，失败 ${failedCount}`,
+      logEntry: {
+        type: "行情刷新",
+        detail: `批量刷新：成功 ${successCount}，失败 ${failedCount}`,
+      },
     });
 
     ui.refreshQuotesBtn.disabled = false;
@@ -520,6 +734,29 @@ function init() {
   ui.setNowBtn.addEventListener("click", () => {
     ui.inputs.updatedAt.value = toDatetimeLocalValue(new Date().toISOString());
     syncAndSave({ notice: "已更新为当前时间" });
+  });
+
+  ui.withdrawInputs.amount.addEventListener("input", () => renderWithdrawPreview(appState));
+  ui.withdrawInputs.target.addEventListener("change", () => renderWithdrawPreview(appState));
+
+  ui.withdrawNowBtn.addEventListener("click", () => {
+    ui.withdrawInputs.at.value = toDatetimeLocalValue(new Date().toISOString());
+  });
+
+  ui.withdrawForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyWithdrawal();
+  });
+
+  ui.clearHistoryBtn.addEventListener("click", () => {
+    appState.logs = [];
+    addLog(appState, {
+      type: "历史清空",
+      detail: "已清空历史记录",
+    });
+    renderHistory(appState.logs);
+    saveState(appState);
+    showSaveStatus("历史已清空");
   });
 }
 
