@@ -189,7 +189,7 @@
 
       if (!response.ok) {
         console.warn("读取云端账本失败。", response.status);
-        return null;
+        return undefined;
       }
 
       const rows = await response.json();
@@ -199,7 +199,7 @@
       return normalizeLoadedState(payload, createDefaultState());
     } catch (error) {
       console.warn("读取云端账本异常。", error);
-      return null;
+      return undefined;
     }
   }
 

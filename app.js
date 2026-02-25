@@ -1495,6 +1495,11 @@ async function hydrateFromCloud() {
   if (!isCloudEnabled()) return;
 
   const cloudState = await loadCloudState();
+  if (cloudState === undefined) {
+    showSaveStatus("云端读取失败，已保留本地数据（未覆盖云端）");
+    return;
+  }
+
   if (!cloudState) {
     queueCloudSave(appState, { immediate: true });
     showSaveStatus("已初始化云端账本");
