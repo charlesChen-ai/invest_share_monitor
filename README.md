@@ -68,6 +68,17 @@
 3. 后续每次操作会保存到本地存储，可手动“保存到连接文件”落盘
 4. 在另一台设备可通过“导入 JSON”恢复
 
+## Git 安全（防止本地数据上云）
+
+仓库已配置 `.gitignore` 忽略本地持久化文件：
+
+- `fund-ledger-*.json`
+- `ledger.json`
+- `ledger_data.json`
+- `local-ledger*.json`
+
+建议继续使用页面默认文件名（`fund-ledger-日期.json`），可避免误提交本地账本数据。
+
 ## 自动现价获取
 
 操作页“持仓现价维护”支持：

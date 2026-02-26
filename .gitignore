@@ -1,0 +1,11 @@
+# System / editor
+.DS_Store
+.vscode/
+
+# Local persistence files (do not push)
+fund-ledger-*.json
+ledger.json
+ledger_data.json
+ledger-data*.json
+local-ledger*.json
+*.ledger.local.json
