@@ -1,12 +1,5 @@
 (function initLedgerStorage(global) {
-  const STORAGE_KEY = "equity_ledger_rmb_v2";
-  const MAX_LOG_ENTRIES = 300;
-  const MAX_SNAPSHOTS = 480;
-  const DEFAULT_STATE_ROW_ID = "shared-ledger";
-  const CLOUD_TABLE = "ledger_states";
-
-  const HOLDING_TYPES = new Set(["stock", "fund"]);
-  const HOLDING_OWNERS = new Set(["proportional", "memberA", "memberB"]);
+  const STORAGE_KEY = "equity_fund_local_v3";
 
   function uid() {
     if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
@@ -27,292 +20,239 @@
     return `${y}-${m}-${d}`;
   }
 
-  function normalizeHolding(raw = {}) {
+  function normalizeMember(raw, index = 0) {
     const source = raw && typeof raw === "object" ? raw : {};
-    const assetType = HOLDING_TYPES.has(source.assetType) ? source.assetType : "stock";
-    const owner = HOLDING_OWNERS.has(source.owner) ? source.owner : "proportional";
+    const id = String(source.id || source.memberId || `member-${index + 1}`).trim() || `member-${index + 1}`;
+    const name = String(source.name || "").trim() || `成员${index + 1}`;
+    return { id, name };
+  }
 
+  function normalizeSubscription(raw, members = []) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const memberId = String(source.memberId || "").trim();
+    const validMemberId = members.some((member) => member.id === memberId) ? memberId : members[0]?.id || "";
     return {
-      id: source.id || uid(),
-      assetType,
-      owner,
-      code: source.code || "",
-      name: source.name || "",
-      quantity: number(source.quantity),
-      avgCost: number(source.avgCost),
-      currentPrice: number(source.currentPrice),
+      id: String(source.id || uid()),
+      memberId: validMemberId,
+      amount: Math.max(0, number(source.amount)),
+      shares: Math.max(0, number(source.shares)),
+      navAtSubscription: Math.max(0, number(source.navAtSubscription)),
+      at: source.at || new Date().toISOString(),
+      note: String(source.note || "").trim(),
     };
   }
 
-  function normalizeMembers(rawMembers, defaultMembers) {
-    if (!Array.isArray(rawMembers) || rawMembers.length !== 2) return defaultMembers;
+  function normalizeWithdrawal(raw, members = []) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const memberId = String(source.memberId || "").trim();
+    const validMemberId = members.some((member) => member.id === memberId) ? memberId : members[0]?.id || "";
+    return {
+      id: String(source.id || uid()),
+      memberId: validMemberId,
+      amount: Math.max(0, number(source.amount)),
+      shares: Math.max(0, number(source.shares)),
+      navAtWithdrawal: Math.max(0, number(source.navAtWithdrawal)),
+      at: source.at || new Date().toISOString(),
+      note: String(source.note || "").trim(),
+    };
+  }
 
-    return rawMembers.map((member, index) => {
-      const fallback = defaultMembers[index] || { name: `成员${index === 0 ? "A" : "B"}`, principal: 0 };
-      const safeMember = member && typeof member === "object" ? member : {};
-      const name = String(safeMember.name || "").trim() || fallback.name;
-      const principal = number(safeMember.principal);
-      return { name, principal };
+  function normalizeTrade(raw, members = []) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const code = String(source.code || "").trim().toUpperCase();
+    const type = source.type === "sell" ? "sell" : "buy";
+    const sourceMemberId = String(source.sourceMemberId || "").trim();
+    const validSourceMemberId =
+      sourceMemberId === "pool" || members.some((member) => member.id === sourceMemberId) ? sourceMemberId : "pool";
+
+    return {
+      id: String(source.id || uid()),
+      type,
+      code,
+      name: String(source.name || "").trim(),
+      price: Math.max(0, number(source.price)),
+      quantity: Math.max(0, number(source.quantity)),
+      sourceMemberId: validSourceMemberId,
+      at: source.at || new Date().toISOString(),
+      note: String(source.note || "").trim(),
+    };
+  }
+
+  function normalizeNote(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      id: String(source.id || uid()),
+      at: source.at || new Date().toISOString(),
+      text: String(source.text || "").trim(),
+    };
+  }
+
+  function normalizeLog(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      id: String(source.id || uid()),
+      at: source.at || new Date().toISOString(),
+      type: String(source.type || "操作").trim() || "操作",
+      detail: String(source.detail || "").trim(),
+    };
+  }
+
+  function normalizePriceMap(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const output = {};
+    Object.keys(source).forEach((key) => {
+      const code = String(key || "").trim().toUpperCase();
+      if (!code) return;
+      const price = number(source[key]);
+      if (price > 0) output[code] = price;
     });
+    return output;
   }
 
-  function cloudConfig() {
-    const raw = global.LEDGER_CONFIG && typeof global.LEDGER_CONFIG === "object" ? global.LEDGER_CONFIG : {};
-    const supabaseUrl = String(raw.supabaseUrl || "").trim().replace(/\/+$/, "");
-    const supabaseAnonKey = String(raw.supabaseAnonKey || "").trim();
-    const stateRowId = String(raw.stateRowId || DEFAULT_STATE_ROW_ID).trim() || DEFAULT_STATE_ROW_ID;
-    return { supabaseUrl, supabaseAnonKey, stateRowId };
-  }
-
-  function isCloudEnabled() {
-    const cfg = cloudConfig();
-    return Boolean(cfg.supabaseUrl && cfg.supabaseAnonKey);
-  }
-
-  function normalizeLoadedState(parsed, defaults) {
-    const source = parsed && typeof parsed === "object" ? parsed : {};
-    const merged = {
-      ...defaults,
-      ...source,
-      members: normalizeMembers(source.members, defaults.members),
-      holdings: Array.isArray(source.holdings) ? source.holdings.map((h) => normalizeHolding(h)) : defaults.holdings,
-      logs: Array.isArray(source.logs) ? source.logs : defaults.logs,
-      dailyBaselines:
-        source.dailyBaselines && typeof source.dailyBaselines === "object"
-          ? source.dailyBaselines
-          : defaults.dailyBaselines,
-      snapshots: Array.isArray(source.snapshots) ? source.snapshots : [],
-    };
-
-    if (!merged.snapshots.length) {
-      merged.snapshots = [toSnapshotPoint(merged, merged.updatedAt || new Date().toISOString())];
-    }
-
-    const latestSnapshot = merged.snapshots[merged.snapshots.length - 1];
-    if (number(merged.currentTotalAsset) <= 0 && latestSnapshot && number(latestSnapshot.totalAsset) > 0) {
-      merged.currentTotalAsset = number(latestSnapshot.totalAsset);
-    }
-
-    return merged;
-  }
-
-  function toSnapshotPoint(state, at = new Date().toISOString()) {
-    const principalA = number(state.members?.[0]?.principal);
-    const principalB = number(state.members?.[1]?.principal);
-    const totalPrincipal = principalA + principalB;
-    const totalAsset = number(state.currentTotalAsset);
-    const netValue = totalPrincipal > 0 ? totalAsset / totalPrincipal : 0;
-
+  function createEmptyState() {
     return {
-      at,
-      totalAsset,
-      assetA: netValue * principalA,
-      assetB: netValue * principalB,
-    };
-  }
-
-  function createDefaultState() {
-    const now = new Date().toISOString();
-    const initialTotalAsset = 176754.95;
-    const initialAssetA = 31573;
-    const initialAssetB = 145182;
-
-    return {
-      members: [
-        { name: "成员一", principal: 31573 },
-        { name: "成员二", principal: 145182 },
-      ],
-      currentTotalAsset: initialTotalAsset,
-      cashAmount: 4122.55,
-      updatedAt: now,
-      holdings: [
-        {
-          id: uid(),
-          assetType: "stock",
-          owner: "proportional",
-          code: "300807",
-          name: "天迈科技",
-          quantity: 3100,
-          avgCost: 52.598,
-          currentPrice: 55.1,
-        },
-      ],
-      logs: [
-        {
-          id: uid(),
-          at: now,
-          type: "初始化",
-          detail: "账本已创建",
-        },
-      ],
+      schemaVersion: 1,
+      members: [],
+      subscriptions: [],
+      withdrawals: [],
+      trades: [],
+      prices: {},
+      notes: [],
+      logs: [],
       dailyBaselines: {},
-      snapshots: [
-        {
-          at: now,
-          totalAsset: initialTotalAsset,
-          assetA: initialAssetA,
-          assetB: initialAssetB,
-        },
-      ],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  function normalizeDailyBaselines(raw, members) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    const output = {};
+
+    Object.keys(source).forEach((dateKey) => {
+      const base = source[dateKey] && typeof source[dateKey] === "object" ? source[dateKey] : {};
+      const memberAssets = {};
+      const memberInvested = {};
+
+      members.forEach((member) => {
+        const id = member.id;
+        memberAssets[id] = number(base.memberAssets?.[id]);
+        memberInvested[id] = number(base.memberInvested?.[id]);
+      });
+
+      output[dateKey] = {
+        at: base.at || new Date().toISOString(),
+        totalAsset: number(base.totalAsset),
+        memberAssets,
+        memberInvested,
+      };
+    });
+
+    return output;
+  }
+
+  function normalizeState(raw) {
+    const defaults = createEmptyState();
+    const source = raw && typeof raw === "object" ? raw : {};
+
+    const membersRaw = Array.isArray(source.members) ? source.members : [];
+    const members = membersRaw.map((member, index) => normalizeMember(member, index));
+    const uniqueMembers = [];
+    const seenIds = new Set();
+    members.forEach((member) => {
+      if (seenIds.has(member.id)) return;
+      seenIds.add(member.id);
+      uniqueMembers.push(member);
+    });
+
+    const subscriptions = (Array.isArray(source.subscriptions) ? source.subscriptions : [])
+      .map((item) => normalizeSubscription(item, uniqueMembers))
+      .filter((item) => item.memberId && item.amount > 0 && item.shares > 0)
+      .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    const withdrawals = (Array.isArray(source.withdrawals) ? source.withdrawals : [])
+      .map((item) => normalizeWithdrawal(item, uniqueMembers))
+      .filter((item) => item.memberId && item.amount > 0 && item.shares > 0)
+      .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    const trades = (Array.isArray(source.trades) ? source.trades : [])
+      .map((item) => normalizeTrade(item, uniqueMembers))
+      .filter((item) => item.code && item.price > 0 && item.quantity > 0)
+      .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    const notes = (Array.isArray(source.notes) ? source.notes : [])
+      .map((item) => normalizeNote(item))
+      .filter((item) => item.text)
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, 500);
+
+    const logs = (Array.isArray(source.logs) ? source.logs : [])
+      .map((item) => normalizeLog(item))
+      .filter((item) => item.detail)
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, 800);
+
+    const prices = normalizePriceMap(source.prices);
+    const dailyBaselines = normalizeDailyBaselines(source.dailyBaselines, uniqueMembers);
+
+    return {
+      ...defaults,
+      schemaVersion: 1,
+      members: uniqueMembers,
+      subscriptions,
+      withdrawals,
+      trades,
+      prices,
+      notes,
+      logs,
+      dailyBaselines,
+      updatedAt: source.updatedAt || defaults.updatedAt,
     };
   }
 
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return createDefaultState();
-
+      if (!raw) return createEmptyState();
       const parsed = JSON.parse(raw);
-      const defaults = createDefaultState();
-      return normalizeLoadedState(parsed, defaults);
+      return normalizeState(parsed);
     } catch {
-      return createDefaultState();
-    }
-  }
-
-  async function loadCloudState() {
-    if (!isCloudEnabled()) return null;
-    if (typeof fetch !== "function") return null;
-
-    const { supabaseUrl, supabaseAnonKey, stateRowId } = cloudConfig();
-    const query = `id=eq.${encodeURIComponent(stateRowId)}&select=payload&limit=1`;
-    const url = `${supabaseUrl}/rest/v1/${CLOUD_TABLE}?${query}`;
-
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          apikey: supabaseAnonKey,
-          Authorization: `Bearer ${supabaseAnonKey}`,
-        },
-      });
-
-      if (!response.ok) {
-        console.warn("读取云端账本失败。", response.status);
-        return undefined;
-      }
-
-      const rows = await response.json();
-      const payload = Array.isArray(rows) && rows[0] ? rows[0].payload : null;
-      if (!payload || typeof payload !== "object") return null;
-
-      return normalizeLoadedState(payload, createDefaultState());
-    } catch (error) {
-      console.warn("读取云端账本异常。", error);
-      return undefined;
+      return createEmptyState();
     }
   }
 
   function saveState(state) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      return true;
-    } catch (error) {
-      console.warn("保存账本数据失败，已继续使用内存数据。", error);
-      return false;
+      const normalized = normalizeState(state);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+      return normalized;
+    } catch {
+      return normalizeState(state);
     }
   }
 
-  async function saveCloudState(state) {
-    if (!isCloudEnabled()) return false;
-    if (typeof fetch !== "function") return false;
-
-    const { supabaseUrl, supabaseAnonKey, stateRowId } = cloudConfig();
-    const url = `${supabaseUrl}/rest/v1/${CLOUD_TABLE}`;
-    const now = new Date().toISOString();
-    const payload = [{ id: stateRowId, payload: state, updated_at: now }];
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseAnonKey,
-          Authorization: `Bearer ${supabaseAnonKey}`,
-          Prefer: "resolution=merge-duplicates,return=minimal",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.warn("写入云端账本失败。", response.status, text);
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      console.warn("写入云端账本异常。", error);
-      return false;
-    }
-  }
-
-  function addLog(state, { type, detail, at }) {
-    state.logs = [
-      {
-        id: uid(),
-        at: at || new Date().toISOString(),
-        type,
-        detail,
-      },
-      ...(state.logs || []),
-    ].slice(0, MAX_LOG_ENTRIES);
-  }
-
-  function ensureTodayBaseline(state) {
-    if (!state.dailyBaselines || typeof state.dailyBaselines !== "object") {
-      state.dailyBaselines = {};
-    }
-
-    const key = dateKeyOf();
-    if (state.dailyBaselines[key]) return false;
-
-    state.dailyBaselines[key] = toSnapshotPoint(state);
-    return true;
-  }
-
-  function pushSnapshot(state, { force = false } = {}) {
-    if (!Array.isArray(state.snapshots)) {
-      state.snapshots = [];
-    }
-
-    const now = new Date().toISOString();
-    const next = toSnapshotPoint(state, now);
-    const last = state.snapshots[state.snapshots.length - 1];
-
-    if (last) {
-      const sameValue =
-        Math.abs(number(last.totalAsset) - next.totalAsset) < 0.01 &&
-        Math.abs(number(last.assetA) - next.assetA) < 0.01 &&
-        Math.abs(number(last.assetB) - next.assetB) < 0.01;
-      const timeDelta = Math.abs(new Date(now).getTime() - new Date(last.at).getTime());
-
-      if (!force && sameValue && timeDelta < 5 * 60 * 1000) {
-        return false;
-      }
-    }
-
-    state.snapshots.push(next);
-    if (state.snapshots.length > MAX_SNAPSHOTS) {
-      state.snapshots.splice(0, state.snapshots.length - MAX_SNAPSHOTS);
-    }
-
-    return true;
+  function addLog(state, { type = "操作", detail = "", at = null } = {}) {
+    const text = String(detail || "").trim();
+    if (!text) return;
+    const log = {
+      id: uid(),
+      at: at || new Date().toISOString(),
+      type: String(type || "操作").trim() || "操作",
+      detail: text,
+    };
+    if (!Array.isArray(state.logs)) state.logs = [];
+    state.logs.unshift(log);
+    if (state.logs.length > 800) state.logs = state.logs.slice(0, 800);
   }
 
   global.LedgerStorage = {
+    STORAGE_KEY,
     uid,
     number,
     dateKeyOf,
-    normalizeHolding,
-    createDefaultState,
+    createEmptyState,
+    normalizeState,
     loadState,
-    loadCloudState,
     saveState,
-    saveCloudState,
     addLog,
-    ensureTodayBaseline,
-    pushSnapshot,
-    isCloudEnabled,
   };
 })(window);

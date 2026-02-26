@@ -1,125 +1,82 @@
-# Investment Monitor (RMB Ledger)
+# 股票基金账本（本地版）
 
-A two-page frontend ledger for shared investing:
+该项目已重构为“本地优先”的股票基金账本：
 
-- `index.html`: dashboard (display)
-- `operation.html`: edit / operations
+- 不使用云端同步（已移除 Supabase 依赖）
+- 核心记录仅包含：
+  - 成员入金/出金记录（时间、金额、当时净值、份额变化）
+- 管理员股票交易记录（买卖、价格、数量、备注）
+- 持仓现价（支持按代码自动获取实时价）
+- 管理员备注
 
-Now supports **shared cloud storage via Supabase** (optional). If cloud is not configured, it still works with local browser storage.
+## 页面
 
-## Files
+- `index.html`：展示页（总资产、总收益、成员收益、当日收益、持仓）
+- `operation.html`：操作页（成员、入金/出金、交易、价格更新、备注、本地文件管理）
 
-- `index.html`: display page
-- `operation.html`: operation page
-- `styles.css`: styles
-- `app.js`: UI logic + calculations + sync flow
-- `storage.js`: local persistence + optional Supabase persistence
-- `config.js`: runtime config (Supabase URL/key/row id)
-- `config.example.js`: config template
+## 数据文件
 
-## Quick Start (Local-only)
+- `storage.js`：本地存储模块（`localStorage`）
+- `ledger-core.js`：基金份额与收益计算核心
+- `app.js`：页面渲染、操作事件、本地文件读写
 
-1. Open `/Users/chaos/Codes/invest_monitor/index.html`.
-2. Go to operation page and edit data.
-3. Data is saved in localStorage.
+## 收益分配逻辑（关键）
 
-## Enable Shared Cloud Data (Supabase)
+### 1) 资金进出 = 份额增减
 
-### 1. Create Supabase project
+每笔入金在当时净值下折算份额：
 
-Create a project at [Supabase](https://supabase.com/).
+- `购买份额 = 入金金额 / 入金时净值`
 
-### 2. Create table
+每笔出金在当时净值下赎回份额：
 
-Run this SQL in Supabase SQL Editor:
+- `赎回份额 = 出金金额 / 出金时净值`
 
-```sql
-create table if not exists public.ledger_states (
-  id text primary key,
-  payload jsonb not null,
-  updated_at timestamptz not null default now()
-);
-```
+因此后续收益按份额分配，不会出现“新入金直接共享历史收益”。
 
-### 3. Allow browser read/write (simple setup)
+### 2) 成员总收益
 
-For personal/internal use, run:
+- `成员累计净入金 = 成员累计入金 - 成员累计出金`
+- `成员当前资产 = 成员持有份额 × 当前净值`
+- `成员总收益 = 成员当前资产 - 成员累计净入金`
 
-```sql
-alter table public.ledger_states enable row level security;
+### 3) 当日收益（成员）
 
-create policy "anon can read ledger_states"
-on public.ledger_states
-for select
-to anon
-using (true);
+当日收益按“资产变化扣除当日净入金”计算：
 
-create policy "anon can write ledger_states"
-on public.ledger_states
-for insert
-to anon
-with check (true);
+- `成员当日收益 = 当前成员资产 - 当日基线成员资产 - 今日净入金`
 
-create policy "anon can update ledger_states"
-on public.ledger_states
-for update
-to anon
-using (true)
-with check (true);
-```
+其中“今日净入金 = 今日入金 - 今日出金”。
 
-### 4. Fill config
+这保证了：
+- 当天入金不会被误算成收益
+- 每位成员当日收益与其份额变化严格对应
 
-Edit `/Users/chaos/Codes/invest_monitor/config.js`:
+## 本地文件使用
 
-```js
-window.LEDGER_CONFIG = {
-  supabaseUrl: "https://YOUR_PROJECT.supabase.co",
-  supabaseAnonKey: "YOUR_SUPABASE_ANON_KEY",
-  stateRowId: "shared-ledger",
-};
-```
+操作页提供以下能力：
 
-Notes:
+- 连接本地 JSON 文件
+- 保存到连接文件
+- 从连接文件刷新
+- 导入/导出 JSON
 
-- `stateRowId` must be the same for both devices/users.
-- `anon key` is a public key, but keep project policies minimal and controlled.
+建议流程：
 
-### 5. Verify
+1. 打开 `operation.html`
+2. 点击“连接本地文件”并选择同一个 `.json` 文件
+3. 后续每次操作会保存到本地存储，可手动“保存到连接文件”落盘
+4. 在另一台设备可通过“导入 JSON”恢复
 
-- Open operation page on your device, edit any field.
-- Open dashboard page on partner device (same deployed URL), refresh.
-- Both should see same data.
+## 自动现价获取
 
-## Deploy (Simplest)
+操作页“持仓现价维护”支持：
 
-### Option A: GitHub Pages
+- 单条“自动获取”：按股票代码抓取实时价并自动保存
+- “自动获取全部现价”：批量刷新全部持仓代码
 
-1. Push repo to GitHub.
-2. Repo `Settings -> Pages`.
-3. Source: `Deploy from a branch`.
-4. Branch: `main`, folder: `/root`.
-5. Wait for the Pages URL.
+若行情源临时不可用，可改用手动录入现价后点击“保存”。
 
-### Option B: Vercel
+## 清空数据
 
-1. Import the GitHub repo into Vercel.
-2. Framework preset: `Other`.
-3. Deploy directly (no build command needed).
-
-## Current Calculation Notes
-
-- Net value is **stock-account-only**:
-  - `净值 = 股票资产快照 / 总本金`
-- Total profit is holdings-based:
-  - `总收益 = 股票持仓总浮盈 + 基金持仓总浮盈`
-- Today profit is based on the day baseline of profit metrics.
-
-## Troubleshooting
-
-- If dashboard/operation shows old values, hard refresh (`Cmd+Shift+R`).
-- If cloud sync fails, check:
-  - `config.js` values
-  - Supabase table/policies
-  - browser console error logs
-- Without cloud config, app stays local-only by design.
+操作页点击“清空全部数据”，并输入确认口令 `清空全部` 后执行。

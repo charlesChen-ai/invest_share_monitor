@@ -342,6 +342,14 @@ table.history-table {
   min-width: 620px;
 }
 
+table.snapshot-history-table {
+  min-width: 700px;
+}
+
+table.member-table {
+  min-width: 860px;
+}
+
 th,
 td {
   padding: 8px 8px;
@@ -349,6 +357,23 @@ td {
   text-align: left;
   vertical-align: middle;
   white-space: nowrap;
+}
+
+#snapshot-history-body tr {
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+#snapshot-history-body tr:hover {
+  background: rgba(20, 84, 212, 0.05);
+}
+
+#snapshot-history-body tr.selected {
+  background: rgba(20, 84, 212, 0.1);
+}
+
+#snapshot-history-body tr.selected td {
+  border-bottom-color: rgba(20, 84, 212, 0.18);
 }
 
 th {
@@ -367,6 +392,11 @@ td input {
   font: inherit;
 }
 
+td input[readonly] {
+  background: rgba(246, 248, 252, 0.92);
+  color: #5c6670;
+}
+
 td select {
   width: 100%;
   border: 1px solid rgba(30, 33, 36, 0.13);
@@ -374,6 +404,11 @@ td select {
   background: rgba(255, 255, 255, 0.96);
   padding: 8px 10px;
   font: inherit;
+}
+
+#member-editor-body td[data-field="principal"] {
+  font-weight: 600;
+  color: #2b3138;
 }
 
 .editor-grid {
@@ -421,6 +456,10 @@ input:focus {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+#stock-deal-form {
+  margin-top: 10px;
 }
 
 button:not(.calc-toggle) {
@@ -567,12 +606,17 @@ button.quote-refresh {
 }
 
 .overview-members {
+  display: block;
+}
+
+#op-member-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.overview-members p {
+.overview-members p,
+#op-member-list p {
   margin: 0;
   padding: 7px 8px;
   border-radius: 10px;
@@ -726,6 +770,77 @@ button.quote-refresh {
   margin: 0;
 }
 
+.snapshot-history-layout {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.snapshot-detail-panel {
+  border: 1px solid rgba(24, 28, 34, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 10px 11px;
+  display: grid;
+  gap: 7px;
+}
+
+.snapshot-detail-panel p {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.snapshot-detail-title {
+  font-family: "Noto Serif SC", serif;
+  font-size: 1rem !important;
+  font-weight: 700;
+}
+
+.snapshot-detail-members {
+  display: grid;
+  gap: 6px;
+}
+
+.snapshot-detail-members p {
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(24, 28, 34, 0.1);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.rollback-guard {
+  margin-top: 2px;
+  border: 1px solid rgba(184, 31, 31, 0.22);
+  border-radius: 12px;
+  background: rgba(184, 31, 31, 0.06);
+  padding: 9px 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.rollback-warning {
+  color: #8b1f1f;
+  font-weight: 600;
+}
+
+.rollback-text {
+  color: #3c4551;
+}
+
+.rollback-guard input {
+  border: 1px solid rgba(184, 31, 31, 0.28);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.hidden {
+  display: none !important;
+}
+
 .curve-card {
   padding-bottom: 12px;
 }
@@ -795,6 +910,15 @@ button.quote-refresh {
 }
 
 .today-chip {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(24, 28, 34, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+  font-weight: 600;
+}
+
+#today-profit-list p {
+  margin: 0;
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid rgba(24, 28, 34, 0.1);
@@ -997,6 +1121,10 @@ button.quote-refresh {
   animation-delay: 420ms;
 }
 
+.delay-12 {
+  animation-delay: 450ms;
+}
+
 @keyframes appear {
   to {
     opacity: 1;
@@ -1047,6 +1175,10 @@ button.quote-refresh {
     grid-template-columns: 1fr;
   }
 
+  #op-member-list {
+    grid-template-columns: 1fr;
+  }
+
   .overview-today-grid {
     grid-template-columns: 1fr;
   }
@@ -1060,6 +1192,10 @@ button.quote-refresh {
   }
 
   .snapshot-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .snapshot-history-layout {
     grid-template-columns: 1fr;
   }
 }
