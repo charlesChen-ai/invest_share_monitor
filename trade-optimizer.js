@@ -90,8 +90,58 @@
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         hideSuggestions();
+      } else if (e.key === 'Enter') {
+        // 按Enter键时尝试选择股票
+        e.preventDefault();
+        trySelectStockFromInput();
       }
     });
+    
+    // 失去焦点时尝试选择股票
+    searchInput.addEventListener('blur', () => {
+      setTimeout(() => {
+        trySelectStockFromInput();
+      }, 200); // 延迟一点，让点击建议有时间处理
+    });
+  }
+  
+  // 尝试从输入框选择股票
+  function trySelectStockFromInput() {
+    const searchInput = document.getElementById('stock-search');
+    if (!searchInput) return;
+    
+    const query = searchInput.value.trim();
+    if (!query) return;
+    
+    // 查找匹配的股票
+    const results = searchStocks(query);
+    if (results.length > 0) {
+      // 选择第一个匹配的股票
+      const stock = results[0];
+      selectStock(stock.code, stock.name);
+    } else {
+      // 没有找到匹配的股票，尝试规范化代码
+      const normalizedCode = normalizeCode(query);
+      if (normalizedCode !== query) {
+        // 代码被规范化了，重新搜索
+        const retryResults = searchStocks(normalizedCode);
+        if (retryResults.length > 0) {
+          const stock = retryResults[0];
+          selectStock(stock.code, stock.name);
+        } else {
+          // 还是没有找到，清空选择
+          selectedStock = null;
+          updateHoldingInfo();
+        }
+      } else {
+        // 没有匹配，清空选择
+        selectedStock = null;
+        updateHoldingInfo();
+      }
+    }
+    
+    hideSuggestions();
+  }
   }
   
   // 显示股票建议
@@ -137,10 +187,17 @@
     
     // 1. 搜索持仓股票
     currentSummary.holdings.forEach(holding => {
-      if (holding.code.toLowerCase().includes(normalizedQuery) || 
-          holding.name.toLowerCase().includes(normalizedQuery)) {
+      // 检查代码匹配（支持带后缀和不带后缀）
+      const codeWithoutSuffix = holding.code.replace(/\.(SZ|SH|BJ)$/, '');
+      const codeMatches = holding.code.toLowerCase().includes(normalizedQuery) || 
+                         codeWithoutSuffix.toLowerCase().includes(normalizedQuery);
+      
+      // 检查名称匹配
+      const nameMatches = holding.name.toLowerCase().includes(normalizedQuery);
+      
+      if (codeMatches || nameMatches) {
         results.push({
-          code: holding.code,
+          code: holding.code, // 返回完整的规范化代码
           name: holding.name,
           holding: holding,
           priority: 1 // 持仓股票优先级高
@@ -151,16 +208,24 @@
     // 2. 搜索历史交易股票
     const tradedStocks = new Set();
     currentSummary.tradeRows.forEach(trade => {
-      if (!tradedStocks.has(trade.code) && 
-          (trade.code.toLowerCase().includes(normalizedQuery) || 
-           trade.name.toLowerCase().includes(normalizedQuery))) {
-        results.push({
-          code: trade.code,
-          name: trade.name,
-          holding: currentSummary.holdings.find(h => h.code === trade.code),
-          priority: 2
-        });
-        tradedStocks.add(trade.code);
+      if (!tradedStocks.has(trade.code)) {
+        // 检查代码匹配（支持带后缀和不带后缀）
+        const codeWithoutSuffix = trade.code.replace(/\.(SZ|SH|BJ)$/, '');
+        const codeMatches = trade.code.toLowerCase().includes(normalizedQuery) || 
+                           codeWithoutSuffix.toLowerCase().includes(normalizedQuery);
+        
+        // 检查名称匹配
+        const nameMatches = trade.name.toLowerCase().includes(normalizedQuery);
+        
+        if (codeMatches || nameMatches) {
+          results.push({
+            code: trade.code, // 返回完整的规范化代码
+            name: trade.name,
+            holding: currentSummary.holdings.find(h => h.code === trade.code),
+            priority: 2
+          });
+          tradedStocks.add(trade.code);
+        }
       }
     });
     
@@ -209,7 +274,16 @@
       return;
     }
     
-    const holding = currentSummary.holdings.find(h => h.code === selectedStock.code);
+    // 查找持仓，支持带后缀和不带后缀的匹配
+    const holding = currentSummary.holdings.find(h => {
+      // 完全匹配
+      if (h.code === selectedStock.code) return true;
+      
+      // 去掉后缀后匹配
+      const hCodeWithoutSuffix = h.code.replace(/\.(SZ|SH|BJ)$/, '');
+      const selectedCodeWithoutSuffix = selectedStock.code.replace(/\.(SZ|SH|BJ)$/, '');
+      return hCodeWithoutSuffix === selectedCodeWithoutSuffix;
+    });
     const isSell = document.getElementById('trade-type-sell')?.checked;
     
     if (holding) {
@@ -318,7 +392,21 @@
   // 获取当前价格
   function getCurrentPrice(code) {
     if (!appState || !appState.prices) return 0;
-    return number(appState.prices[code]) || 0;
+    
+    // 首先尝试直接匹配
+    let price = number(appState.prices[code]) || 0;
+    if (price > 0) return price;
+    
+    // 如果没有找到，尝试去掉后缀匹配
+    const codeWithoutSuffix = code.replace(/\.(SZ|SH|BJ)$/, '');
+    for (const [priceCode, priceValue] of Object.entries(appState.prices)) {
+      const priceCodeWithoutSuffix = priceCode.replace(/\.(SZ|SH|BJ)$/, '');
+      if (priceCodeWithoutSuffix === codeWithoutSuffix) {
+        return number(priceValue) || 0;
+      }
+    }
+    
+    return 0;
   }
   
   // 设置交易输入监听
