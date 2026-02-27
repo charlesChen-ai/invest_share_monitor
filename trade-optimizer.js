@@ -13,12 +13,355 @@
   let currentSummary = null;
   let selectedStock = null;
   let searchTimeout = null;
+  let searchRequestId = 0;
+  let remoteSearchVersion = 0;
+  const remoteSearchCache = new Map();
+  const STOCK_SUFFIX_RE = /\.(SZ|SH|BJ)$/i;
+  const DEBUG_PREFIX = '[TradeOptimizer]';
+  
+  function logDebug(message, payload = null) {
+    if (payload === null) {
+      console.log(`${DEBUG_PREFIX} ${message}`);
+      return;
+    }
+    console.log(`${DEBUG_PREFIX} ${message}`, payload);
+  }
+  
+  function normalizeStockCode(value) {
+    if (typeof normalizeCode === 'function') {
+      return normalizeCode(value);
+    }
+    return String(value || '').trim().toUpperCase();
+  }
+  
+  function stripStockSuffix(value) {
+    return normalizeStockCode(value).replace(STOCK_SUFFIX_RE, '');
+  }
+  
+  function isCodeLikeInput(value) {
+    return /^\d{4,6}(\.(SZ|SH|BJ))?$/i.test(normalizeStockCode(value));
+  }
+  
+  function guessSuffixByCode(codeWithoutSuffix) {
+    if (/^[689]/.test(codeWithoutSuffix)) return '.SH';
+    if (/^[03]/.test(codeWithoutSuffix)) return '.SZ';
+    if (/^[48]/.test(codeWithoutSuffix)) return '.BJ';
+    return '';
+  }
+  
+  function getHoldings() {
+    return Array.isArray(currentSummary?.holdings) ? currentSummary.holdings : [];
+  }
+  
+  function getTradeRows() {
+    return Array.isArray(currentSummary?.tradeRows) ? currentSummary.tradeRows : [];
+  }
+  
+  function extractInputCodeCandidate(inputValue) {
+    const normalizedInput = normalizeStockCode(inputValue);
+    if (!normalizedInput) return '';
+    
+    const [firstToken = ''] = normalizedInput.split(/\s+/);
+    if (isCodeLikeInput(firstToken)) return firstToken;
+    
+    const matched = normalizedInput.match(/\d{6}(?:\.(?:SZ|SH|BJ))?/i);
+    return matched ? normalizeStockCode(matched[0]) : '';
+  }
+  
+  function findHoldingByCode(code) {
+    const normalizedCode = normalizeStockCode(code);
+    if (!normalizedCode) return null;
+    
+    const targetWithoutSuffix = stripStockSuffix(normalizedCode);
+    const holdings = getHoldings();
+    
+    return (
+      holdings.find((holding) => {
+        const holdingCode = normalizeStockCode(holding.code);
+        if (!holdingCode) return false;
+        if (holdingCode === normalizedCode) return true;
+        return stripStockSuffix(holdingCode) === targetWithoutSuffix;
+      }) || null
+    );
+  }
+  
+  function findTradeByCode(code) {
+    const normalizedCode = normalizeStockCode(code);
+    if (!normalizedCode) return null;
+    
+    const targetWithoutSuffix = stripStockSuffix(normalizedCode);
+    const tradeRows = getTradeRows();
+    
+    return (
+      tradeRows.find((trade) => {
+        const tradeCode = normalizeStockCode(trade.code);
+        if (!tradeCode) return false;
+        if (tradeCode === normalizedCode) return true;
+        return stripStockSuffix(tradeCode) === targetWithoutSuffix;
+      }) || null
+    );
+  }
+  
+  function findStockNameByCode(code) {
+    const holding = findHoldingByCode(code);
+    if (holding?.name) return String(holding.name).trim();
+    
+    const trade = findTradeByCode(code);
+    if (trade?.name) return String(trade.name).trim();
+    
+    return '';
+  }
+
+  function dedupeStockResults(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const output = [];
+    const indexMap = new Map();
+    const isGenericName = (name, code) => {
+      const text = String(name || '').trim();
+      if (!text) return true;
+      const normalizedName = normalizeStockCode(text);
+      const normalizedCode = normalizeStockCode(code);
+      return normalizedName === normalizedCode || stripStockSuffix(normalizedName) === stripStockSuffix(normalizedCode);
+    };
+    list.forEach((item) => {
+      const code = normalizeStockCode(item?.code);
+      if (!code) return;
+      const incomingName = String(item?.name || '').trim() || code;
+      const incomingHolding = item?.holding || findHoldingByCode(code) || null;
+      const existingIndex = indexMap.get(code);
+
+      if (existingIndex === undefined) {
+        output.push({
+          code,
+          name: incomingName,
+          holding: incomingHolding
+        });
+        indexMap.set(code, output.length - 1);
+        return;
+      }
+
+      const existing = output[existingIndex];
+      if (!existing) return;
+
+      if (isGenericName(existing.name, code) && !isGenericName(incomingName, code)) {
+        existing.name = incomingName;
+      }
+      if (!existing.holding && incomingHolding) {
+        existing.holding = incomingHolding;
+      }
+    });
+    return output;
+  }
+
+  function mergeStockResults(localRows, remoteRows) {
+    const merged = [];
+    const pushRows = (rows = [], isRemote = false) => {
+      rows.forEach((item) => {
+        merged.push({
+          code: normalizeStockCode(item?.code),
+          name: String(item?.name || '').trim(),
+          holding: item?.holding || null,
+          isRemote
+        });
+      });
+    };
+
+    pushRows(localRows, false);
+    pushRows(remoteRows, true);
+    return dedupeStockResults(merged);
+  }
+
+  function toTencentSymbol(rawCode) {
+    const code = normalizeStockCode(rawCode);
+    if (!code) return '';
+    if (/^(SH|SZ|BJ)\d{6}$/i.test(code)) {
+      return `${code.slice(0, 2).toLowerCase()}${code.slice(2)}`;
+    }
+    const digits = stripStockSuffix(code);
+    if (!/^\d{6}$/.test(digits)) return '';
+    if (/^[659]/.test(digits)) return `sh${digits}`;
+    if (/^[03]/.test(digits)) return `sz${digits}`;
+    if (/^[48]/.test(digits)) return `bj${digits}`;
+    return '';
+  }
+
+  function fetchTencentQuoteByCode(rawCode) {
+    return new Promise((resolve, reject) => {
+      const symbol = toTencentSymbol(rawCode);
+      if (!symbol) {
+        reject(new Error('无效代码'));
+        return;
+      }
+
+      const variableName = `v_${symbol}`;
+      const script = document.createElement('script');
+      let timeoutId = null;
+
+      const cleanup = () => {
+        script.onerror = null;
+        script.onload = null;
+        script.remove();
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+
+      timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error('腾讯行情超时'));
+      }, 7000);
+
+      delete window[variableName];
+      script.src = `https://qt.gtimg.cn/q=${symbol}&_=${Date.now()}`;
+      script.charset = 'gbk';
+
+      script.onload = () => {
+        const payload = String(window[variableName] || '').trim();
+        cleanup();
+        const body = payload.replace(/^"+|"+$/g, '');
+        const parts = body.split('~');
+        const name = String(parts[1] || '').trim();
+        const code = normalizeStockCode(parts[2] || stripStockSuffix(rawCode));
+        if (!code || !name) {
+          reject(new Error('腾讯行情缺少名称'));
+          return;
+        }
+        resolve({ code, name });
+      };
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('腾讯行情失败'));
+      };
+
+      document.head.appendChild(script);
+    });
+  }
+
+  function parseSinaSuggestPayload(raw) {
+    const body = String(raw || '').trim();
+    if (!body) return [];
+
+    const rows = body.split(';').map((row) => row.trim()).filter(Boolean);
+    const result = [];
+
+    rows.forEach((row) => {
+      const parts = row.split(',').map((part) => String(part || '').trim());
+      if (!parts.length) return;
+
+      const codeIndex = parts.findIndex((part) => /^\d{6}$/.test(part) || /^(?:sh|sz|bj)\d{6}$/i.test(part));
+      if (codeIndex < 0) return;
+
+      const rawCode = parts[codeIndex];
+      const code = normalizeStockCode(rawCode).replace(/^(SH|SZ|BJ)/i, '');
+      if (!/^\d{6}$/.test(code)) return;
+
+      const candidateName = parts.slice(codeIndex + 1).find((part) => {
+        if (!part) return false;
+        if (/^\d+$/.test(part)) return false;
+        if (/^(?:sh|sz|bj)\d{6}$/i.test(part)) return false;
+        if (/^\d{6}$/.test(part)) return false;
+        return /[\u4e00-\u9fa5A-Za-z]/.test(part);
+      });
+
+      const name = String(candidateName || '').trim();
+      if (!name) return;
+
+      result.push({ code, name });
+    });
+
+    return dedupeStockResults(result);
+  }
+
+  function fetchSinaSuggestions(query) {
+    return new Promise((resolve, reject) => {
+      const keyword = String(query || '').trim();
+      if (!keyword) {
+        resolve([]);
+        return;
+      }
+
+      const callbackName = `suggestdata_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const script = document.createElement('script');
+      let timeoutId = null;
+
+      const cleanup = () => {
+        script.onerror = null;
+        script.onload = null;
+        script.remove();
+        if (timeoutId) clearTimeout(timeoutId);
+        try {
+          delete window[callbackName];
+        } catch {
+          window[callbackName] = undefined;
+        }
+      };
+
+      timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error('新浪联想超时'));
+      }, 7000);
+
+      script.src = `https://suggest3.sinajs.cn/suggest/type=11,12,13,14,15&key=${encodeURIComponent(keyword)}&name=${callbackName}`;
+      script.charset = 'gbk';
+
+      script.onload = () => {
+        const payload = window[callbackName];
+        cleanup();
+        resolve(parseSinaSuggestPayload(payload));
+      };
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('新浪联想失败'));
+      };
+
+      document.head.appendChild(script);
+    });
+  }
+
+  async function searchStocksRemote(query) {
+    const rawQuery = String(query || '').trim();
+    if (rawQuery.length < 2) return [];
+
+    const cacheKey = normalizeStockCode(rawQuery);
+    if (remoteSearchCache.has(cacheKey)) {
+      return remoteSearchCache.get(cacheKey);
+    }
+
+    const codeCandidate = extractInputCodeCandidate(rawQuery);
+    const remoteRows = [];
+
+    try {
+      const list = await fetchSinaSuggestions(rawQuery);
+      remoteRows.push(...list);
+    } catch (error) {
+      logDebug('新浪搜索失败，降级处理', { query: rawQuery, message: error?.message || String(error) });
+    }
+
+    if (codeCandidate) {
+      const pureCode = stripStockSuffix(codeCandidate);
+      const exists = remoteRows.some((item) => stripStockSuffix(item.code) === pureCode);
+      if (!exists) {
+        try {
+          const quote = await fetchTencentQuoteByCode(codeCandidate);
+          remoteRows.push({ code: quote.code, name: quote.name });
+        } catch (error) {
+          logDebug('腾讯代码补全失败', { query: rawQuery, message: error?.message || String(error) });
+        }
+      }
+    }
+
+    const output = dedupeStockResults(remoteRows).slice(0, 20);
+    remoteSearchCache.set(cacheKey, output);
+    return output;
+  }
   
   // 初始化交易优化器
   function init(state, summary) {
     appState = state;
     currentSummary = summary;
     selectedStock = null;
+    remoteSearchVersion += 1;
+    remoteSearchCache.clear();
     
     setupTradeTypeSelector();
     setupStockSearch();
@@ -106,46 +449,78 @@
   }
   
   // 尝试从输入框选择股票
-  function trySelectStockFromInput() {
+  async function trySelectStockFromInput() {
     const searchInput = document.getElementById('stock-search');
     if (!searchInput) return;
     
-    const query = searchInput.value.trim();
-    if (!query) return;
+    const rawQuery = searchInput.value.trim();
+    if (!rawQuery) return;
+    const localVersion = remoteSearchVersion;
     
-    console.log('[调试] 尝试选择股票，查询:', query);
+    const normalizedQuery = normalizeStockCode(rawQuery);
+    const queryLower = rawQuery.toLowerCase();
+    const codeCandidate = extractInputCodeCandidate(rawQuery);
+    const targetCode = codeCandidate || normalizedQuery;
+    const targetWithoutSuffix = stripStockSuffix(targetCode);
     
-    // 查找匹配的股票
-    const results = searchStocks(query);
-    console.log('[调试] 搜索结果数量:', results.length);
+    logDebug('尝试根据输入自动选择股票', {
+      rawQuery,
+      normalizedQuery,
+      codeCandidate
+    });
     
-    if (results.length > 0) {
-      // 选择第一个匹配的股票
-      const stock = results[0];
-      console.log('[调试] 选择股票:', stock.code, stock.name);
-      selectStock(stock.code, stock.name);
-    } else {
-      // 没有找到匹配的股票
-      console.log('[调试] 没有找到匹配的股票，查询:', query);
-      
-      // 尝试自动添加后缀
-      const codeWithSuffix = tryAddStockSuffix(query);
-      if (codeWithSuffix && codeWithSuffix !== query) {
-        console.log('[调试] 尝试添加后缀后重新搜索:', codeWithSuffix);
-        const retryResults = searchStocks(codeWithSuffix);
-        if (retryResults.length > 0) {
-          const stock = retryResults[0];
-          console.log('[调试] 添加后缀后找到股票:', stock.code);
-          selectStock(stock.code, stock.name);
-          hideSuggestions();
-          return;
-        }
+    const localResults = searchStocks(rawQuery);
+    const remoteResults = await searchStocksRemote(rawQuery);
+    if (localVersion !== remoteSearchVersion) return;
+    if (searchInput.value.trim() !== rawQuery) return;
+    let results = mergeStockResults(localResults, remoteResults);
+    
+    const pickBestResult = () => {
+      if (!results.length) return null;
+      const exactMatch = results.find((item) => {
+        const itemCode = normalizeStockCode(item.code);
+        return itemCode === targetCode || stripStockSuffix(itemCode) === targetWithoutSuffix;
+      });
+      if (exactMatch) return exactMatch;
+      const exactName = results.find((item) => String(item.name || '').trim().toLowerCase() === queryLower);
+      if (exactName) return exactName;
+      const prefixName = results.find((item) => String(item.name || '').trim().toLowerCase().startsWith(queryLower));
+      return prefixName || results[0];
+    };
+    
+    let matchedStock = pickBestResult();
+    
+    if (!matchedStock && codeCandidate) {
+      const codeWithSuffix = tryAddStockSuffix(codeCandidate);
+      if (codeWithSuffix && codeWithSuffix !== codeCandidate) {
+        logDebug('首次搜索未命中，补后缀后重试', {
+          inputCode: codeCandidate,
+          codeWithSuffix
+        });
+        const localRetry = searchStocks(codeWithSuffix);
+        const remoteRetry = await searchStocksRemote(codeWithSuffix);
+        if (localVersion !== remoteSearchVersion) return;
+        if (searchInput.value.trim() !== rawQuery) return;
+        results = mergeStockResults(localRetry, remoteRetry);
+        matchedStock = results.find((item) => {
+          const itemCode = normalizeStockCode(item.code);
+          return itemCode === codeWithSuffix || stripStockSuffix(itemCode) === stripStockSuffix(codeWithSuffix);
+        }) || results[0] || null;
       }
-      
-      // 还是没有找到，清空选择
-      console.log('[调试] 清空股票选择');
+    }
+    
+    if (matchedStock) {
+      logDebug('自动选择股票成功', {
+        selectedCode: matchedStock.code,
+        selectedName: matchedStock.name
+      });
+      selectStock(matchedStock.code, matchedStock.name);
+    } else {
+      logDebug('自动选择股票失败，清空当前选择', { rawQuery });
       selectedStock = null;
       updateHoldingInfo();
+      updatePriceReference();
+      updateTradeValidation();
     }
     
     hideSuggestions();
@@ -153,37 +528,79 @@
   
   // 尝试为股票代码添加后缀
   function tryAddStockSuffix(code) {
-    const normalized = normalizeCode(code);
+    const normalized = normalizeStockCode(code);
+    if (!normalized) return '';
     
     // 如果已经包含后缀，直接返回
-    if (normalized.match(/\.(SZ|SH|BJ)$/)) {
+    if (STOCK_SUFFIX_RE.test(normalized)) {
       return normalized;
     }
     
-    // 尝试常见后缀
-    const suffixes = ['.SZ', '.SH', '.BJ'];
-    for (const suffix of suffixes) {
-      const codeWithSuffix = normalized + suffix;
-      // 检查是否有这个代码的持仓或交易记录
-      if (currentSummary) {
-        const hasHolding = currentSummary.holdings.some(h => h.code === codeWithSuffix);
-        const hasTrade = currentSummary.tradeRows.some(t => t.code === codeWithSuffix);
-        if (hasHolding || hasTrade) {
-          return codeWithSuffix;
-        }
+    const baseCode = stripStockSuffix(normalized);
+    const candidates = [];
+    
+    getHoldings().forEach((holding, index) => {
+      const holdingCode = normalizeStockCode(holding.code);
+      if (stripStockSuffix(holdingCode) === baseCode) {
+        candidates.push({ code: holdingCode, source: 'holding', priority: 1, index });
       }
+    });
+    
+    getTradeRows().forEach((trade, index) => {
+      const tradeCode = normalizeStockCode(trade.code);
+      if (stripStockSuffix(tradeCode) === baseCode) {
+        candidates.push({ code: tradeCode, source: 'trade', priority: 2, index });
+      }
+    });
+    
+    if (appState?.prices && typeof appState.prices === 'object') {
+      Object.keys(appState.prices).forEach((priceCode, index) => {
+        const normalizedPriceCode = normalizeStockCode(priceCode);
+        if (stripStockSuffix(normalizedPriceCode) === baseCode) {
+          candidates.push({ code: normalizedPriceCode, source: 'price', priority: 3, index });
+        }
+      });
     }
     
-    // 没有找到匹配的后缀
+    if (candidates.length) {
+      candidates.sort((a, b) => a.priority - b.priority || a.index - b.index);
+      const bestMatch = candidates[0].code;
+      logDebug('根据已有数据匹配到股票后缀', {
+        inputCode: normalized,
+        matchedCode: bestMatch,
+        candidateCount: candidates.length
+      });
+      return bestMatch;
+    }
+    
+    // 向后兼容：没有已知数据时按常见规则猜测后缀
+    const guessedSuffix = guessSuffixByCode(baseCode);
+    if (guessedSuffix) {
+      const guessedCode = `${baseCode}${guessedSuffix}`;
+      logDebug('未命中持仓/交易，按规则推断后缀', {
+        inputCode: normalized,
+        guessedCode
+      });
+      return guessedCode;
+    }
+    
+    logDebug('无法推断后缀，保留原始代码', { inputCode: normalized });
     return normalized;
   }
   
   // 显示股票建议
-  function showStockSuggestions(query) {
+  async function showStockSuggestions(query) {
     const suggestions = document.getElementById('stock-suggestions');
     if (!suggestions) return;
+    const currentRequestId = ++searchRequestId;
     
-    const results = searchStocks(query);
+    suggestions.innerHTML = '<div class="stock-suggestion-item">检索中...</div>';
+    suggestions.style.display = 'block';
+
+    const localResults = searchStocks(query);
+    const remoteResults = await searchStocksRemote(query);
+    if (currentRequestId !== searchRequestId) return;
+    const results = mergeStockResults(localResults, remoteResults);
     
     if (results.length === 0) {
       suggestions.innerHTML = '<div class="stock-suggestion-item">未找到匹配的股票</div>';
@@ -216,72 +633,105 @@
   function searchStocks(query) {
     if (!currentSummary) return [];
     
-    const normalizedQuery = query.toLowerCase();
-    const results = [];
+    const rawQuery = String(query || '').trim();
+    if (!rawQuery) return [];
     
-    // 1. 搜索持仓股票
-    currentSummary.holdings.forEach(holding => {
-      // 检查代码匹配（支持带后缀和不带后缀）
-      const codeWithoutSuffix = holding.code.replace(/\.(SZ|SH|BJ)$/, '');
-      const codeMatches = holding.code.toLowerCase().includes(normalizedQuery) || 
-                         codeWithoutSuffix.toLowerCase().includes(normalizedQuery);
+    const normalizedQuery = normalizeStockCode(rawQuery);
+    const queryLower = normalizedQuery.toLowerCase();
+    const queryCodeCandidate = extractInputCodeCandidate(rawQuery);
+    const queryWithoutSuffix = stripStockSuffix(queryCodeCandidate || normalizedQuery);
+    
+    const resultMap = new Map();
+    
+    const pushIfMatched = ({ code, name, holding, priority }) => {
+      const normalizedCode = normalizeStockCode(code);
+      if (!normalizedCode) return;
       
-      // 检查名称匹配
-      const nameMatches = holding.name.toLowerCase().includes(normalizedQuery);
+      const codeWithoutSuffix = stripStockSuffix(normalizedCode);
+      const stockName = String(name || '').trim() || normalizedCode;
       
-      if (codeMatches || nameMatches) {
-        results.push({
-          code: holding.code, // 返回完整的规范化代码
-          name: holding.name,
-          holding: holding,
-          priority: 1 // 持仓股票优先级高
+      const codeMatches = normalizedCode.toLowerCase().includes(queryLower) ||
+        codeWithoutSuffix.toLowerCase().includes(queryLower) ||
+        (queryCodeCandidate && codeWithoutSuffix === queryWithoutSuffix);
+      const nameMatches = stockName.toLowerCase().includes(queryLower);
+      
+      if (!codeMatches && !nameMatches) return;
+      
+      const exactCodeMatch = normalizedCode === normalizedQuery || codeWithoutSuffix === queryWithoutSuffix;
+      const score = priority * 10 + (exactCodeMatch ? 0 : 1);
+      const existing = resultMap.get(normalizedCode);
+      
+      if (!existing || score < existing.score) {
+        resultMap.set(normalizedCode, {
+          code: normalizedCode,
+          name: stockName,
+          holding: holding || findHoldingByCode(normalizedCode),
+          priority,
+          score
         });
       }
+    };
+    
+    getHoldings().forEach((holding) => {
+      pushIfMatched({
+        code: holding.code,
+        name: holding.name,
+        holding,
+        priority: 1
+      });
     });
     
-    // 2. 搜索历史交易股票
-    const tradedStocks = new Set();
-    currentSummary.tradeRows.forEach(trade => {
-      if (!tradedStocks.has(trade.code)) {
-        // 检查代码匹配（支持带后缀和不带后缀）
-        const codeWithoutSuffix = trade.code.replace(/\.(SZ|SH|BJ)$/, '');
-        const codeMatches = trade.code.toLowerCase().includes(normalizedQuery) || 
-                           codeWithoutSuffix.toLowerCase().includes(normalizedQuery);
-        
-        // 检查名称匹配
-        const nameMatches = trade.name.toLowerCase().includes(normalizedQuery);
-        
-        if (codeMatches || nameMatches) {
-          results.push({
-            code: trade.code, // 返回完整的规范化代码
-            name: trade.name,
-            holding: currentSummary.holdings.find(h => h.code === trade.code),
-            priority: 2
-          });
-          tradedStocks.add(trade.code);
-        }
-      }
+    getTradeRows().forEach((trade) => {
+      pushIfMatched({
+        code: trade.code,
+        name: trade.name,
+        holding: findHoldingByCode(trade.code),
+        priority: 2
+      });
     });
     
-    // 按优先级排序
-    return results.sort((a, b) => a.priority - b.priority);
+    const sortedResults = [...resultMap.values()]
+      .sort((a, b) => a.score - b.score || a.code.localeCompare(b.code, 'zh-CN'))
+      .map(({ score, ...item }) => item);
+    
+    logDebug('股票搜索结果', {
+      query: rawQuery,
+      normalizedQuery,
+      resultCount: sortedResults.length,
+      topCodes: sortedResults.slice(0, 5).map((item) => item.code)
+    });
+    
+    return sortedResults;
   }
   
   // 选择股票
   function selectStock(code, name) {
-    selectedStock = { code, name };
+    const normalizedInputCode = normalizeStockCode(code);
+    const canonicalCode = tryAddStockSuffix(normalizedInputCode) || normalizedInputCode;
+    const canonicalName = String(name || '').trim() || findStockNameByCode(canonicalCode) || canonicalCode;
+    
+    selectedStock = { code: canonicalCode, name: canonicalName };
+    
+    const holding = findHoldingByCode(canonicalCode);
+    logDebug('已选择股票', {
+      inputCode: code,
+      normalizedInputCode,
+      selectedCode: canonicalCode,
+      selectedName: canonicalName,
+      holdingMatched: !!holding
+    });
     
     // 更新搜索框
     const searchInput = document.getElementById('stock-search');
     if (searchInput) {
-      searchInput.value = `${code} ${name}`;
+      searchInput.value = `${selectedStock.code} ${selectedStock.name}`;
     }
     
     // 更新隐藏的代码和名称字段（向后兼容）
     const codeInput = document.getElementById('trade-code');
     const nameInput = document.getElementById('trade-name');
-    if (codeInput) codeInput.value = code;
-    if (nameInput) nameInput.value = name;
+    if (codeInput) codeInput.value = selectedStock.code;
+    if (nameInput) nameInput.value = selectedStock.name;
     
     // 更新持仓信息
     updateHoldingInfo();
@@ -308,19 +758,29 @@
       return;
     }
     
-    // 查找持仓，支持带后缀和不带后缀的匹配
-    const holding = currentSummary.holdings.find(h => {
-      // 完全匹配
-      if (h.code === selectedStock.code) return true;
-      
-      // 去掉后缀后匹配
-      const hCodeWithoutSuffix = h.code.replace(/\.(SZ|SH|BJ)$/, '');
-      const selectedCodeWithoutSuffix = selectedStock.code.replace(/\.(SZ|SH|BJ)$/, '');
-      return hCodeWithoutSuffix === selectedCodeWithoutSuffix;
-    });
+    const holding = findHoldingByCode(selectedStock.code);
     const isSell = document.getElementById('trade-type-sell')?.checked;
     
+    logDebug('更新持仓显示', {
+      selectedCode: selectedStock.code,
+      matchedHoldingCode: holding?.code || null
+    });
+    
     if (holding) {
+      const quantity = number(holding.quantity);
+      const costPrice = number(
+        holding.costPrice !== undefined && holding.costPrice !== null
+          ? holding.costPrice
+          : holding.avgCost
+      );
+      const pnl = number(holding.pnl);
+      const marketValue = number(holding.marketValue);
+      const costValueFromRow = number(holding.costValue);
+      const costValue = costValueFromRow > 0 ? costValueFromRow : costPrice * quantity;
+      const pnlPercent = Number.isFinite(Number(holding.pnlPercent))
+        ? number(holding.pnlPercent)
+        : (costValue > 0 ? (pnl / costValue) * 100 : 0);
+      
       quantityDisplay.textContent = formatUnits(holding.quantity, 3);
       
       if (sellableLabel) {
@@ -343,16 +803,16 @@
             </div>
             <div class="holding-metric">
               <div class="holding-metric-label">成本均价</div>
-              <div class="holding-metric-value">${formatCurrency(holding.costPrice)}</div>
+              <div class="holding-metric-value">${formatCurrency(costPrice)}</div>
             </div>
             <div class="holding-metric">
               <div class="holding-metric-label">当前市值</div>
-              <div class="holding-metric-value">${formatCurrency(holding.marketValue)}</div>
+              <div class="holding-metric-value">${formatCurrency(marketValue)}</div>
             </div>
             <div class="holding-metric">
               <div class="holding-metric-label">持仓盈亏</div>
-              <div class="holding-metric-value ${holding.pnl >= 0 ? 'positive' : 'negative'}">
-                ${formatCurrency(holding.pnl)} (${holding.pnlPercent.toFixed(2)}%)
+              <div class="holding-metric-value ${pnl >= 0 ? 'positive' : 'negative'}">
+                ${formatCurrency(pnl)} (${pnlPercent.toFixed(2)}%)
               </div>
             </div>
           </div>
@@ -427,14 +887,16 @@
   function getCurrentPrice(code) {
     if (!appState || !appState.prices) return 0;
     
+    const normalizedCode = normalizeStockCode(code);
+    
     // 首先尝试直接匹配
-    let price = number(appState.prices[code]) || 0;
+    let price = number(appState.prices[normalizedCode]) || 0;
     if (price > 0) return price;
     
     // 如果没有找到，尝试去掉后缀匹配
-    const codeWithoutSuffix = code.replace(/\.(SZ|SH|BJ)$/, '');
+    const codeWithoutSuffix = stripStockSuffix(normalizedCode);
     for (const [priceCode, priceValue] of Object.entries(appState.prices)) {
-      const priceCodeWithoutSuffix = priceCode.replace(/\.(SZ|SH|BJ)$/, '');
+      const priceCodeWithoutSuffix = stripStockSuffix(priceCode);
       if (priceCodeWithoutSuffix === codeWithoutSuffix) {
         return number(priceValue) || 0;
       }
@@ -477,6 +939,7 @@
     const price = number(document.getElementById('trade-price')?.value || 0);
     const quantity = number(document.getElementById('trade-quantity')?.value || 0);
     const amount = price * quantity;
+    const selectedHolding = isSell && selectedStock ? findHoldingByCode(selectedStock.code) : null;
     
     const statusElement = document.getElementById('trade-status');
     const submitButton = document.getElementById('submit-trade-btn');
@@ -502,17 +965,16 @@
     
     // 卖出验证
     if (isSell) {
-      const holding = currentSummary?.holdings.find(h => h.code === selectedStock.code);
-      if (!holding || holding.quantity <= 0) {
+      if (!selectedHolding || selectedHolding.quantity <= 0) {
         statusElement.className = 'trade-status error';
         statusElement.innerHTML = '<p class="hint">该股票当前无可卖出仓位</p>';
         submitButton.disabled = true;
         return;
       }
       
-      if (quantity > holding.quantity + 1e-8) {
+      if (quantity > selectedHolding.quantity + 1e-8) {
         statusElement.className = 'trade-status error';
-        statusElement.innerHTML = `<p class="hint">可卖出上限为 ${formatUnits(holding.quantity, 3)} 股</p>`;
+        statusElement.innerHTML = `<p class="hint">可卖出上限为 ${formatUnits(selectedHolding.quantity, 3)} 股</p>`;
         submitButton.disabled = true;
         return;
       }
@@ -530,7 +992,7 @@
     
     // 验证通过
     const action = isSell ? '卖出' : '买入';
-    const holdingText = isSell ? `，卖出后剩余 ${formatUnits(Math.max(0, (holding?.quantity || 0) - quantity), 3)} 股` : '';
+    const holdingText = isSell ? `，卖出后剩余 ${formatUnits(Math.max(0, (selectedHolding?.quantity || 0) - quantity), 3)} 股` : '';
     statusElement.className = 'trade-status success';
     statusElement.innerHTML = `<p class="hint">${action} ${selectedStock.code} ${formatUnits(quantity, 3)} 股，成交金额 ${formatCurrency(amount)}${holdingText}</p>`;
   }
@@ -645,6 +1107,7 @@
   
   // 隐藏建议
   function hideSuggestions() {
+    searchRequestId += 1;
     const suggestions = document.getElementById('stock-suggestions');
     if (suggestions) {
       suggestions.style.display = 'none';
@@ -709,6 +1172,8 @@
   function updateState(state, summary) {
     appState = state;
     currentSummary = summary;
+    remoteSearchVersion += 1;
+    if (remoteSearchCache.size > 60) remoteSearchCache.clear();
     
     // 如果已选择股票，更新相关信息
     if (selectedStock) {

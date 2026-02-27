@@ -20,6 +20,9 @@
   let fileSaveInFlight = false;
   let fileSaveQueued = false;
   let saveStatusTimer = null;
+  const FILE_HANDLE_DB_NAME = "equity_fund_file_handle_db";
+  const FILE_HANDLE_STORE_NAME = "handles";
+  const FILE_HANDLE_RECORD_KEY = "connected_file";
 
   function byId(id) {
     return document.getElementById(id);
@@ -139,6 +142,126 @@
     return fetchTencentQuote(symbol);
   }
 
+  function stockCodeDigits(rawCode) {
+    const code = normalizeCode(rawCode);
+    if (!code) return "";
+    const matched = code.match(/(\d{6})/);
+    return matched ? matched[1] : "";
+  }
+
+  function isNameMissingOrCodeLike(name, code) {
+    const text = String(name || "").trim();
+    if (!text) return true;
+
+    const normalizedName = normalizeCode(text);
+    if (/^\d{4,6}$/.test(normalizedName)) return true;
+    if (/^(SH|SZ|BJ)\d{6}$/.test(normalizedName)) return true;
+    if (/^\d{6}\.(SH|SZ|BJ)$/.test(normalizedName)) return true;
+
+    const codeDigits = stockCodeDigits(code);
+    const nameDigits = stockCodeDigits(normalizedName);
+    if (codeDigits && nameDigits && codeDigits === nameDigits) return true;
+
+    return false;
+  }
+
+  async function repairTradeStockNames({ silent = true } = {}) {
+    if (!Array.isArray(appState.trades) || appState.trades.length === 0) {
+      return { fixedCount: 0, fetchedCount: 0, failedCount: 0 };
+    }
+
+    const knownNameByCode = new Map();
+    const fallbackNameByCode = {
+      "300807": "天迈科技",
+    };
+    const rememberName = (rawCode, rawName) => {
+      const codeDigits = stockCodeDigits(rawCode);
+      const nameText = String(rawName || "").trim();
+      if (!codeDigits || isNameMissingOrCodeLike(nameText, rawCode)) return;
+      if (!knownNameByCode.has(codeDigits)) {
+        knownNameByCode.set(codeDigits, nameText);
+      }
+    };
+
+    appState.trades.forEach((trade) => {
+      rememberName(trade.code, trade.name);
+    });
+
+    const summary = computeSummary(appState);
+    (summary.holdings || []).forEach((holding) => {
+      rememberName(holding.code, holding.name);
+    });
+
+    const unknownCodes = new Set();
+    let fixedCount = 0;
+
+    appState.trades.forEach((trade) => {
+      const codeDigits = stockCodeDigits(trade.code);
+      if (!codeDigits) return;
+      if (!isNameMissingOrCodeLike(trade.name, trade.code)) return;
+
+      const knownName = knownNameByCode.get(codeDigits);
+      if (knownName) {
+        trade.name = knownName;
+        fixedCount += 1;
+      } else {
+        unknownCodes.add(codeDigits);
+      }
+    });
+
+    let fetchedCount = 0;
+    let failedCount = 0;
+
+    for (const codeDigits of unknownCodes) {
+      const fallbackName = String(fallbackNameByCode[codeDigits] || "").trim();
+      if (fallbackName && !isNameMissingOrCodeLike(fallbackName, codeDigits)) {
+        knownNameByCode.set(codeDigits, fallbackName);
+        fetchedCount += 1;
+        continue;
+      }
+
+      try {
+        const quote = await fetchQuoteByCode(codeDigits);
+        const quoteName = String(quote?.name || "").trim();
+        if (quoteName && !isNameMissingOrCodeLike(quoteName, codeDigits)) {
+          knownNameByCode.set(codeDigits, quoteName);
+          fetchedCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    if (fetchedCount > 0) {
+      appState.trades.forEach((trade) => {
+        const codeDigits = stockCodeDigits(trade.code);
+        if (!codeDigits) return;
+        if (!isNameMissingOrCodeLike(trade.name, trade.code)) return;
+        const knownName = knownNameByCode.get(codeDigits);
+        if (knownName) {
+          trade.name = knownName;
+          fixedCount += 1;
+        }
+      });
+    }
+
+    if (fixedCount > 0) {
+      addLog(appState, {
+        type: "数据修复",
+        detail: `自动修复股票名称 ${fixedCount} 条（网络补全 ${fetchedCount} 条）`,
+      });
+      persistState({
+        notice: silent ? null : `已自动修复 ${fixedCount} 条股票名称`,
+      });
+    } else if (!silent && unknownCodes.size > 0) {
+      showSaveStatus("未修复到有效股票名称（可稍后重试）");
+    }
+
+    return { fixedCount, fetchedCount, failedCount };
+  }
+
   function setText(id, value) {
     const el = byId(id);
     if (el) el.textContent = value;
@@ -165,6 +288,16 @@
   function clearPositiveNegative(el) {
     if (!el) return;
     el.classList.remove("positive", "negative");
+  }
+
+  function setPositiveNegativeOrNeutral(el, value, epsilon = 0.000001) {
+    if (!el) return;
+    const n = number(value);
+    if (Math.abs(n) <= epsilon) {
+      clearPositiveNegative(el);
+      return;
+    }
+    setPositiveNegative(el, n);
   }
 
   function isEmptyLedger(summary) {
@@ -196,6 +329,121 @@
     return typeof window.showOpenFilePicker === "function" && typeof window.showSaveFilePicker === "function";
   }
 
+  function supportsFileHandlePersistence() {
+    return supportsFsAccess() && typeof indexedDB !== "undefined";
+  }
+
+  function openFileHandleDb() {
+    return new Promise((resolve, reject) => {
+      if (!supportsFileHandlePersistence()) {
+        reject(new Error("当前环境不支持文件句柄持久化"));
+        return;
+      }
+
+      const request = indexedDB.open(FILE_HANDLE_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(FILE_HANDLE_STORE_NAME)) {
+          db.createObjectStore(FILE_HANDLE_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("打开句柄数据库失败"));
+    });
+  }
+
+  async function persistConnectedFileHandle(handle) {
+    if (!supportsFileHandlePersistence() || !handle) return false;
+    let db = null;
+    try {
+      db = await openFileHandleDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(FILE_HANDLE_STORE_NAME, "readwrite");
+        tx.objectStore(FILE_HANDLE_STORE_NAME).put(handle, FILE_HANDLE_RECORD_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("写入文件句柄失败"));
+      });
+      return true;
+    } catch (error) {
+      console.warn("持久化文件句柄失败", error);
+      return false;
+    } finally {
+      if (db) db.close();
+    }
+  }
+
+  async function loadPersistedFileHandle() {
+    if (!supportsFileHandlePersistence()) return null;
+    let db = null;
+    try {
+      db = await openFileHandleDb();
+      const handle = await new Promise((resolve, reject) => {
+        const tx = db.transaction(FILE_HANDLE_STORE_NAME, "readonly");
+        const req = tx.objectStore(FILE_HANDLE_STORE_NAME).get(FILE_HANDLE_RECORD_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error || new Error("读取文件句柄失败"));
+      });
+      return handle || null;
+    } catch (error) {
+      console.warn("读取持久化文件句柄失败", error);
+      return null;
+    } finally {
+      if (db) db.close();
+    }
+  }
+
+  async function clearPersistedFileHandle() {
+    if (!supportsFileHandlePersistence()) return false;
+    let db = null;
+    try {
+      db = await openFileHandleDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(FILE_HANDLE_STORE_NAME, "readwrite");
+        tx.objectStore(FILE_HANDLE_STORE_NAME).delete(FILE_HANDLE_RECORD_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("清除文件句柄失败"));
+      });
+      return true;
+    } catch (error) {
+      console.warn("清除持久化文件句柄失败", error);
+      return false;
+    } finally {
+      if (db) db.close();
+    }
+  }
+
+  async function queryFileHandlePermission(handle, mode = "readwrite") {
+    if (!handle || typeof handle.queryPermission !== "function") return "granted";
+    try {
+      return await handle.queryPermission({ mode });
+    } catch {
+      return "prompt";
+    }
+  }
+
+  async function requestFileHandlePermission(handle, mode = "readwrite") {
+    if (!handle || typeof handle.requestPermission !== "function") return "granted";
+    try {
+      return await handle.requestPermission({ mode });
+    } catch {
+      return "denied";
+    }
+  }
+
+  async function ensureFileHandlePermission(handle, { mode = "readwrite", request = false } = {}) {
+    const current = await queryFileHandlePermission(handle, mode);
+    if (current === "granted") return true;
+    if (!request) return false;
+    const next = await requestFileHandlePermission(handle, mode);
+    return next === "granted";
+  }
+
+  async function disconnectPersistedFile(reason = "已断开连接文件") {
+    fileHandle = null;
+    await clearPersistedFileHandle();
+    setFileStatus(reason);
+  }
+
   async function writeStateToConnectedFile() {
     if (!fileHandle) return;
 
@@ -206,13 +454,26 @@
 
     fileSaveInFlight = true;
     try {
+      const granted = await ensureFileHandlePermission(fileHandle, { mode: "readwrite", request: true });
+      if (!granted) {
+        setFileStatus("连接文件未授权写入，请点击“链接文件”重新授权");
+        return;
+      }
+
       const writable = await fileHandle.createWritable();
       await writable.write(JSON.stringify(normalizeState(appState), null, 2));
       await writable.close();
       setFileStatus(`本地文件已更新：${fileHandle.name || "ledger_data.json"}`);
     } catch (error) {
       console.warn("写入本地文件失败", error);
-      setFileStatus(`本地文件写入失败：${error?.message || "未知错误"}`);
+      const name = String(error?.name || "");
+      if (name === "NotFoundError") {
+        await disconnectPersistedFile("连接文件不存在，请重新链接文件");
+      } else if (name === "SecurityError" || name === "NotAllowedError") {
+        setFileStatus("连接文件写入被拒绝，请点击“链接文件”重新授权");
+      } else {
+        setFileStatus(`本地文件写入失败：${error?.message || "未知错误"}`);
+      }
     } finally {
       fileSaveInFlight = false;
       if (fileSaveQueued) {
@@ -427,6 +688,119 @@
     };
   }
 
+  function collectTodayOperationStats(summary) {
+    const dayStart = startOfLocalDay();
+    const dayStartMs = dayStart.getTime();
+    const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000;
+    const isToday = (value) => {
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) && time >= dayStartMs && time < dayEndMs;
+    };
+
+    const subscriptions = (summary.subscriptions || []).filter((row) => isToday(row.at));
+    const withdrawals = (summary.withdrawals || []).filter((row) => isToday(row.at));
+    const trades = (summary.trades || []).filter((row) => isToday(row.at));
+    const buyTrades = trades.filter((trade) => trade.type !== "sell");
+    const sellTrades = trades.filter((trade) => trade.type === "sell");
+
+    const subscribedAmount = round(subscriptions.reduce((sum, row) => sum + number(row.amount), 0), 6);
+    const withdrawnAmount = round(withdrawals.reduce((sum, row) => sum + number(row.amount), 0), 6);
+    const netFlow = round(subscribedAmount - withdrawnAmount, 6);
+    const buyAmount = round(buyTrades.reduce((sum, row) => sum + number(row.price) * number(row.quantity), 0), 6);
+    const sellAmount = round(sellTrades.reduce((sum, row) => sum + number(row.price) * number(row.quantity), 0), 6);
+
+    return {
+      dayStart,
+      flowCount: subscriptions.length + withdrawals.length,
+      tradeCount: trades.length,
+      totalOps: subscriptions.length + withdrawals.length + trades.length,
+      subscriptionsCount: subscriptions.length,
+      withdrawalsCount: withdrawals.length,
+      buyCount: buyTrades.length,
+      sellCount: sellTrades.length,
+      subscribedAmount,
+      withdrawnAmount,
+      netFlow,
+      buyAmount,
+      sellAmount,
+    };
+  }
+
+  function buildDailyDigest(summary, todaySummary, emptyLedger = false) {
+    const todayOps = collectTodayOperationStats(summary);
+    const baselineNav = number(todaySummary?.baseline?.nav);
+    const navChangePct = !emptyLedger && baselineNav > 0 ? ((number(summary.nav) / baselineNav) - 1) * 100 : 0;
+
+    const holdings = Array.isArray(summary.holdings) ? summary.holdings : [];
+    const riseCount = holdings.filter((row) => number(row.pnl) > 0).length;
+    const fallCount = holdings.filter((row) => number(row.pnl) < 0).length;
+    const upRatio = holdings.length > 0 ? riseCount / holdings.length : 0;
+
+    const navSeries = (Array.isArray(appState.overviewSeries) ? appState.overviewSeries : [])
+      .map((row) => ({ at: row?.at, nav: number(row?.nav) }))
+      .filter((row) => row.nav > 0 && !Number.isNaN(new Date(row.at).getTime()))
+      .slice(-10);
+
+    let momentumPct = 0;
+    if (navSeries.length >= 2 && navSeries[0].nav > 0) {
+      momentumPct = ((navSeries[navSeries.length - 1].nav / navSeries[0].nav) - 1) * 100;
+    }
+
+    let trendScore = 0;
+    if (todaySummary.totalTodayProfit > 0.01) trendScore += 1;
+    if (todaySummary.totalTodayProfit < -0.01) trendScore -= 1;
+    if (navChangePct > 0.15) trendScore += 1;
+    if (navChangePct < -0.15) trendScore -= 1;
+    if (momentumPct > 0.12) trendScore += 1;
+    if (momentumPct < -0.12) trendScore -= 1;
+    if (upRatio > 0.66) trendScore += 1;
+    if (upRatio < 0.34 && holdings.length > 0) trendScore -= 1;
+
+    let trendLabel = "区间震荡";
+    let trendTone = "flat";
+    let outlook = "短期方向尚未形成一致信号，建议继续观察净值连续性与仓位结构。";
+
+    if (trendScore >= 2) {
+      trendLabel = "短线偏强";
+      trendTone = "up";
+      outlook = "当前表现偏强，后续可重点跟踪强势持仓的持续性并控制仓位节奏。";
+    } else if (trendScore <= -2) {
+      trendLabel = "短线偏弱";
+      trendTone = "down";
+      outlook = "当前波动偏弱，建议优先控制回撤并关注仓位集中风险。";
+    }
+
+    let lead = "今日暂无新增记录，账户表现主要来自持仓价格波动。";
+    if (emptyLedger) {
+      lead = "暂无可统计的当日数据，记录入金与交易后将自动生成每日总结。";
+    } else if (todayOps.totalOps > 0) {
+      lead = `今日共 ${todayOps.totalOps} 笔操作（资金 ${todayOps.flowCount} 笔，交易 ${todayOps.tradeCount} 笔），资金净流入 ${formatCurrency(todayOps.netFlow)}。`;
+    }
+
+    const navSummaryText = emptyLedger || baselineNav <= 0
+      ? "净值变化：—"
+      : `净值由 ${formatUnits(baselineNav, 8)} 变为 ${formatUnits(summary.nav, 8)}（${formatSignedPercent(navChangePct)}）。`;
+
+    const footnote = emptyLedger
+      ? "当日收益将在有数据后按“昨日总资产 + 今日净入金”为基线计算。"
+      : `当日收益按“当前总资产 - (昨日总资产 + 今日净入金)”计算；今日交易金额 ${formatCurrency(todayOps.buyAmount + todayOps.sellAmount)}。`;
+
+    return {
+      todayOps,
+      lead,
+      trendLabel,
+      trendTone,
+      outlook,
+      navChangePct,
+      navSummaryText,
+      footnote,
+      momentumPct,
+      riseCount,
+      fallCount,
+      holdingsCount: holdings.length,
+    };
+  }
+
   function memberNameOf(memberId, summary) {
     return summary.members.find((member) => member.id === memberId)?.name || "未分配成员";
   }
@@ -622,6 +996,37 @@
       todayBar.style.width = `${width}%`;
       todayBar.classList.toggle("loss", todaySummary.totalTodayProfit < 0);
       todayBar.classList.toggle("gain", todaySummary.totalTodayProfit >= 0);
+    }
+
+    const digest = buildDailyDigest(summary, todaySummary, emptyLedger);
+    setText("dash-daily-summary-date", `统计日期：${formatDate(new Date())}`);
+    setText("dash-daily-summary-lead", digest.lead);
+    setText("dash-daily-summary-outlook", digest.outlook);
+    setText("dash-daily-ops-count", `${digest.todayOps.totalOps} 笔`);
+    setText("dash-daily-net-flow", formatCurrency(digest.todayOps.netFlow));
+    setText("dash-daily-nav-change", emptyLedger ? "—" : formatSignedPercent(digest.navChangePct));
+    setText("dash-daily-trade-breakdown", `买${digest.todayOps.buyCount} / 卖${digest.todayOps.sellCount}`);
+    const riseText = digest.holdingsCount > 0 ? `上涨持仓 ${digest.riseCount}/${digest.holdingsCount}` : "暂无持仓";
+    setText(
+      "dash-daily-summary-trend",
+      emptyLedger
+        ? "趋势研判：—"
+        : `趋势研判：${digest.trendLabel}（近段净值${formatSignedPercent(digest.momentumPct)}，${riseText}）`
+    );
+    setText("dash-daily-summary-footnote", `${digest.navSummaryText} ${digest.footnote}`);
+
+    const trendEl = byId("dash-daily-summary-trend");
+    if (trendEl) {
+      trendEl.classList.remove("trend-up", "trend-down", "trend-flat");
+      if (!emptyLedger) trendEl.classList.add(`trend-${digest.trendTone}`);
+    }
+
+    if (emptyLedger) {
+      clearPositiveNegative(byId("dash-daily-net-flow"));
+      clearPositiveNegative(byId("dash-daily-nav-change"));
+    } else {
+      setPositiveNegativeOrNeutral(byId("dash-daily-net-flow"), digest.todayOps.netFlow);
+      setPositiveNegativeOrNeutral(byId("dash-daily-nav-change"), digest.navChangePct);
     }
 
     const memberCards = byId("dash-member-cards");
@@ -1409,6 +1814,13 @@
       if (!handle) return;
 
       fileHandle = handle;
+      await persistConnectedFileHandle(handle);
+      const granted = await ensureFileHandlePermission(handle, { mode: "readwrite", request: true });
+      if (!granted) {
+        setFileStatus(`已记住文件：${handle.name}（请授权后自动同步）`);
+        return;
+      }
+
       const file = await handle.getFile();
       const text = await file.text();
 
@@ -1420,7 +1832,7 @@
         showSaveStatus("已从本地文件载入数据");
       }
 
-      setFileStatus(`已连接文件：${handle.name}`);
+      setFileStatus(`已连接文件：${handle.name}（后续将自动同步）`);
     } catch (error) {
       if (error?.name === "AbortError") return;
       setFileStatus(`连接文件失败：${error?.message || "未知错误"}`);
@@ -1446,6 +1858,9 @@
             },
           ],
         });
+        if (fileHandle) {
+          await persistConnectedFileHandle(fileHandle);
+        }
       }
 
       await writeStateToConnectedFile();
@@ -1456,28 +1871,58 @@
     }
   }
 
-  async function loadFromConnectedFile() {
+  async function loadFromConnectedFile({ silent = false, requestPermission = true } = {}) {
     if (!fileHandle) {
       setFileStatus("请先连接本地文件");
-      return;
+      return false;
     }
 
     try {
+      const granted = await ensureFileHandlePermission(fileHandle, { mode: "read", request: requestPermission });
+      if (!granted) {
+        setFileStatus("连接文件未授权读取，请点击“链接文件”重新授权");
+        return false;
+      }
+
       const file = await fileHandle.getFile();
       const text = await file.text();
       if (!text.trim()) {
         setFileStatus("文件为空，未载入");
-        return;
+        return false;
       }
 
       appState = normalizeState(JSON.parse(text));
       appState = saveState(appState);
       renderAll();
-      showSaveStatus("已从连接文件刷新数据");
+      if (!silent) showSaveStatus("已从连接文件刷新数据");
       setFileStatus(`已从文件载入：${fileHandle.name}`);
+      return true;
     } catch (error) {
-      setFileStatus(`载入文件失败：${error?.message || "未知错误"}`);
+      const name = String(error?.name || "");
+      if (name === "NotFoundError") {
+        await disconnectPersistedFile("连接文件不存在，请重新链接文件");
+      } else {
+        setFileStatus(`载入文件失败：${error?.message || "未知错误"}`);
+      }
+      return false;
     }
+  }
+
+  async function restoreConnectedFileOnInit() {
+    if (!byId("operation-page")) return false;
+    if (!supportsFileHandlePersistence()) return false;
+
+    const handle = await loadPersistedFileHandle();
+    if (!handle) return false;
+
+    fileHandle = handle;
+    const loaded = await loadFromConnectedFile({ silent: true, requestPermission: true });
+    if (loaded) {
+      setFileStatus(`已自动连接文件：${handle.name}`);
+      return true;
+    }
+
+    return false;
   }
 
   function importFromFileInput(file) {
@@ -1621,14 +2066,26 @@
     });
   }
 
-  function init() {
+  async function init() {
     bindDashboardEvents();
     bindOperationEvents();
-    renderAll();
 
-    if (byId("operation-page")) {
-      setFileStatus("当前模式：本地存储（可连接/导入 JSON 文件）");
-      showSaveStatus("已加载本地数据");
+    const operationPage = Boolean(byId("operation-page"));
+    let autoLinked = false;
+
+    if (operationPage) {
+      setFileStatus("正在检查已连接文件...");
+      autoLinked = await restoreConnectedFileOnInit();
+    }
+
+    renderAll();
+    repairTradeStockNames({ silent: !operationPage });
+
+    if (operationPage) {
+      if (!autoLinked && !fileHandle) {
+        setFileStatus("当前模式：本地存储（可连接/导入 JSON 文件）");
+      }
+      showSaveStatus(autoLinked ? "已自动加载连接文件数据" : "已加载本地数据");
     }
   }
 
@@ -1646,6 +2103,7 @@
     applyWithdrawal,
     applyTrade,
     applyPriceUpdate,
+    repairTradeStockNames,
     addAdminNote,
     clearAllData,
     renderAll,

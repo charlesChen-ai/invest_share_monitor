@@ -229,8 +229,10 @@
                 </div>
                 <label class="trade-input-group">
                   <span>成交价格</span>
-                  <input id="trade-price" type="number" min="0" step="0.001" placeholder="输入价格">
-                  <span class="input-unit">元</span>
+                  <span class="trade-input-with-unit">
+                    <input id="trade-price" type="number" min="0" step="0.001" placeholder="输入价格">
+                    <span class="input-unit">元</span>
+                  </span>
                 </label>
               </div>
 
@@ -243,8 +245,10 @@
                 </div>
                 <label class="trade-input-group">
                   <span>成交数量</span>
-                  <input id="trade-quantity" type="number" min="0" step="1" placeholder="输入数量">
-                  <span class="input-unit">股</span>
+                  <span class="trade-input-with-unit">
+                    <input id="trade-quantity" type="number" min="0" step="1" placeholder="输入数量">
+                    <span class="input-unit">股</span>
+                  </span>
                 </label>
               </div>
 
@@ -384,8 +388,8 @@
           <h3>近期操作记录</h3>
           <p>最近更新与关键变动</p>
         </div>
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap op-log-wrap">
+          <table class="op-log-table">
             <thead>
               <tr>
                 <th>时间</th>

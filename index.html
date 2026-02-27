@@ -111,7 +111,42 @@
         <div id="dash-member-cards" class="member-cards"></div>
       </section>
 
-      <section class="card reveal delay-6">
+      <section class="card daily-summary-card reveal delay-6">
+        <div class="section-head">
+          <h3>每日总结</h3>
+          <p id="dash-daily-summary-date">统计日期：—</p>
+        </div>
+        <div class="daily-summary-grid">
+          <div class="daily-summary-main">
+            <p id="dash-daily-summary-lead" class="daily-summary-lead">暂无当日数据</p>
+            <p id="dash-daily-summary-trend" class="daily-summary-trend">趋势研判：—</p>
+            <p id="dash-daily-summary-outlook" class="daily-summary-outlook">后续关注：—</p>
+          </div>
+          <div class="daily-summary-metrics">
+            <p>
+              <span>今日操作</span>
+              <strong id="dash-daily-ops-count">0 笔</strong>
+            </p>
+            <p>
+              <span>资金净流入</span>
+              <strong id="dash-daily-net-flow">¥0.00</strong>
+            </p>
+            <p>
+              <span>净值变化</span>
+              <strong id="dash-daily-nav-change">—</strong>
+            </p>
+            <p>
+              <span>交易分布</span>
+              <strong id="dash-daily-trade-breakdown">买0 / 卖0</strong>
+            </p>
+          </div>
+        </div>
+        <p id="dash-daily-summary-footnote" class="daily-summary-footnote">
+          今日收益基于“昨日收盘总资产 + 今日净入金”作为基线计算。
+        </p>
+      </section>
+
+      <section class="card reveal delay-7">
         <div class="section-head">
           <div class="section-head-inline">
             <h3>当前股票持仓</h3>
@@ -128,7 +163,7 @@
         <div id="dash-holdings-list" class="dash-holding-list"></div>
       </section>
 
-      <section class="card reveal delay-7">
+      <section class="card reveal delay-8">
         <div class="section-head">
           <h3>资金结构</h3>
           <p>账户资金与仓位结构</p>
