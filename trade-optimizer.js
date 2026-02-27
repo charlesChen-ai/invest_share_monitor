@@ -113,35 +113,69 @@
     const query = searchInput.value.trim();
     if (!query) return;
     
+    console.log('[调试] 尝试选择股票，查询:', query);
+    
     // 查找匹配的股票
     const results = searchStocks(query);
+    console.log('[调试] 搜索结果数量:', results.length);
+    
     if (results.length > 0) {
       // 选择第一个匹配的股票
       const stock = results[0];
+      console.log('[调试] 选择股票:', stock.code, stock.name);
       selectStock(stock.code, stock.name);
     } else {
-      // 没有找到匹配的股票，尝试规范化代码
-      const normalizedCode = normalizeCode(query);
-      if (normalizedCode !== query) {
-        // 代码被规范化了，重新搜索
-        const retryResults = searchStocks(normalizedCode);
+      // 没有找到匹配的股票
+      console.log('[调试] 没有找到匹配的股票，查询:', query);
+      
+      // 尝试自动添加后缀
+      const codeWithSuffix = tryAddStockSuffix(query);
+      if (codeWithSuffix && codeWithSuffix !== query) {
+        console.log('[调试] 尝试添加后缀后重新搜索:', codeWithSuffix);
+        const retryResults = searchStocks(codeWithSuffix);
         if (retryResults.length > 0) {
           const stock = retryResults[0];
+          console.log('[调试] 添加后缀后找到股票:', stock.code);
           selectStock(stock.code, stock.name);
-        } else {
-          // 还是没有找到，清空选择
-          selectedStock = null;
-          updateHoldingInfo();
+          hideSuggestions();
+          return;
         }
-      } else {
-        // 没有匹配，清空选择
-        selectedStock = null;
-        updateHoldingInfo();
       }
+      
+      // 还是没有找到，清空选择
+      console.log('[调试] 清空股票选择');
+      selectedStock = null;
+      updateHoldingInfo();
     }
     
     hideSuggestions();
   }
+  
+  // 尝试为股票代码添加后缀
+  function tryAddStockSuffix(code) {
+    const normalized = normalizeCode(code);
+    
+    // 如果已经包含后缀，直接返回
+    if (normalized.match(/\.(SZ|SH|BJ)$/)) {
+      return normalized;
+    }
+    
+    // 尝试常见后缀
+    const suffixes = ['.SZ', '.SH', '.BJ'];
+    for (const suffix of suffixes) {
+      const codeWithSuffix = normalized + suffix;
+      // 检查是否有这个代码的持仓或交易记录
+      if (currentSummary) {
+        const hasHolding = currentSummary.holdings.some(h => h.code === codeWithSuffix);
+        const hasTrade = currentSummary.tradeRows.some(t => t.code === codeWithSuffix);
+        if (hasHolding || hasTrade) {
+          return codeWithSuffix;
+        }
+      }
+    }
+    
+    // 没有找到匹配的后缀
+    return normalized;
   }
   
   // 显示股票建议

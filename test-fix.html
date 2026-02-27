@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票代码匹配测试</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .test { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .input-group { margin: 10px 0; }
+        input { padding: 8px; width: 200px; }
+        button { padding: 8px 16px; margin-left: 10px; }
+        .result { margin-top: 10px; padding: 10px; background: #f5f5f5; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>股票代码匹配测试</h1>
+    
+    <div class="test">
+        <h3>测试说明</h3>
+        <p>这个测试模拟交易优化器中的股票代码匹配逻辑。</p>
+        <p>问题：用户输入"300807"，但持仓代码是"300807.SZ"</p>
+        <p>修复：添加了自动后缀匹配功能</p>
+    </div>
+    
+    <div class="test">
+        <h3>模拟测试</h3>
+        <div class="input-group">
+            <label>输入股票代码：</label>
+            <input id="test-code" type="text" value="300807" placeholder="如：300807">
+            <button onclick="testCodeMatch()">测试匹配</button>
+        </div>
+        <div id="test-result" class="result"></div>
+    </div>
+    
+    <div class="test">
+        <h3>实际测试</h3>
+        <p>现在可以打开操作页面进行实际测试：</p>
+        <a href="operation.html" target="_blank" style="display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px;">
+            打开操作页面测试
+        </a>
+        <p>测试步骤：</p>
+        <ol>
+            <li>打开操作页面</li>
+            <li>在股票搜索框输入"300807"</li>
+            <li>按回车或点击其他地方</li>
+            <li>检查持仓信息是否显示</li>
+            <li>按F12查看控制台调试信息</li>
+        </ol>
+    </div>
+    
+    <script>
+        // 模拟持仓数据
+        const mockHoldings = [
+            { code: '300807.SZ', name: '天迈科技', quantity: 1000, costPrice: 25.5, marketValue: 26800, pnl: 1300, pnlPercent: 5.1 },
+            { code: '600519.SH', name: '贵州茅台', quantity: 100, costPrice: 1800, marketValue: 185050, pnl: 5050, pnlPercent: 2.8 }
+        ];
+        
+        const mockTrades = [
+            { code: '300807.SZ', name: '天迈科技' },
+            { code: '600519.SH', name: '贵州茅台' }
+        ];
+        
+        // 模拟搜索函数
+        function searchStocks(query) {
+            const normalizedQuery = query.toLowerCase();
+            const results = [];
+            
+            // 搜索持仓
+            mockHoldings.forEach(holding => {
+                const codeWithoutSuffix = holding.code.replace(/\.(SZ|SH|BJ)$/, '');
+                const codeMatches = holding.code.toLowerCase().includes(normalizedQuery) || 
+                                   codeWithoutSuffix.toLowerCase().includes(normalizedQuery);
+                const nameMatches = holding.name.toLowerCase().includes(normalizedQuery);
+                
+                if (codeMatches || nameMatches) {
+                    results.push({
+                        code: holding.code,
+                        name: holding.name,
+                        holding: holding,
+                        priority: 1
+                    });
+                }
+            });
+            
+            return results;
+        }
+        
+        // 模拟添加后缀函数
+        function tryAddStockSuffix(code, holdings, trades) {
+            const normalized = code.toUpperCase();
+            
+            if (normalized.match(/\.(SZ|SH|BJ)$/)) {
+                return normalized;
+            }
+            
+            const suffixes = ['.SZ', '.SH', '.BJ'];
+            for (const suffix of suffixes) {
+                const codeWithSuffix = normalized + suffix;
+                const hasHolding = holdings.some(h => h.code === codeWithSuffix);
+                const hasTrade = trades.some(t => t.code === codeWithSuffix);
+                if (hasHolding || hasTrade) {
+                    return codeWithSuffix;
+                }
+            }
+            
+            return normalized;
+        }
+        
+        function testCodeMatch() {
+            const input = document.getElementById('test-code').value.trim();
+            const resultDiv = document.getElementById('test-result');
+            
+            if (!input) {
+                resultDiv.innerHTML = '<span class="error">请输入股票代码</span>';
+                return;
+            }
+            
+            let html = `<h4>测试结果：${input}</h4>`;
+            
+            // 1. 直接搜索
+            const directResults = searchStocks(input);
+            html += `<p>直接搜索结果：${directResults.length} 个匹配</p>`;
+            if (directResults.length > 0) {
+                html += `<ul>`;
+                directResults.forEach(r => {
+                    html += `<li>${r.code} - ${r.name}</li>`;
+                });
+                html += `</ul>`;
+            }
+            
+            // 2. 尝试添加后缀
+            const codeWithSuffix = tryAddStockSuffix(input, mockHoldings, mockTrades);
+            html += `<p>尝试添加后缀：${codeWithSuffix}</p>`;
+            
+            // 3. 添加后缀后搜索
+            if (codeWithSuffix !== input) {
+                const suffixResults = searchStocks(codeWithSuffix);
+                html += `<p>添加后缀后搜索结果：${suffixResults.length} 个匹配</p>`;
+                if (suffixResults.length > 0) {
+                    html += `<ul>`;
+                    suffixResults.forEach(r => {
+                        html += `<li>${r.code} - ${r.name}</li>`;
+                    });
+                    html += `</ul>`;
+                }
+            }
+            
+            // 总结
+            const found = directResults.length > 0 || (codeWithSuffix !== input && searchStocks(codeWithSuffix).length > 0);
+            html += `<p><strong>${found ? '✅ 可以匹配到持仓' : '❌ 无法匹配到持仓'}</strong></p>`;
+            
+            resultDiv.innerHTML = html;
+        }
+        
+        // 页面加载时自动测试
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('股票代码匹配测试页面已加载');
+            console.log('模拟持仓数据:', mockHoldings);
+            testCodeMatch();
+        });
+    </script>
+</body>
+</html>
