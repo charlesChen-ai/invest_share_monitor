@@ -1,10 +1,13 @@
 // 交易界面优化模块
 // 提供智能股票搜索、持仓提示、实时价格参考等功能
 
-(function initTradeOptimizer(global) {
+(function initTradeOptimizerModule(global) {
   const storage = global.LedgerStorage || {};
   const core = global.LedgerCore || {};
-  const { number, round, normalizeCode } = core;
+  
+  // 从storage获取number函数，因为core中没有导出
+  const number = storage.number || ((value) => Number(value) || 0);
+  const { round, normalizeCode } = core;
   
   let appState = null;
   let currentSummary = null;
@@ -12,7 +15,7 @@
   let searchTimeout = null;
   
   // 初始化交易优化器
-  function initTradeOptimizer(state, summary) {
+  function init(state, summary) {
     appState = state;
     currentSummary = summary;
     selectedStock = null;
@@ -597,7 +600,7 @@
   
   // 导出公共API
   global.TradeOptimizer = {
-    init: initTradeOptimizer,
+    init: init,
     updateState: updateState,
     getTradeData: getTradeData,
     validateTradeData: validateTradeData,

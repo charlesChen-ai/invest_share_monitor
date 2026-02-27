@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>交易优化器测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #e1e5e9;
+            border-radius: 10px;
+            background: #f8f9fa;
+        }
+        .test-result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 8px;
+            background: white;
+            border-left: 4px solid #3498db;
+        }
+        .test-result.success {
+            border-left-color: #27ae60;
+            background: #f0fff4;
+        }
+        .test-result.error {
+            border-left-color: #e74c3c;
+            background: #fff5f5;
+        }
+        button {
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        code {
+            background: #f1f3f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>交易优化器功能测试</h1>
+    <p>测试第一阶段优化的核心功能是否正常工作。</p>
+    
+    <div class="test-section">
+        <h2>测试1: 文件加载检查</h2>
+        <button onclick="testFileLoading()">检查文件加载</button>
+        <div id="test1-result" class="test-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试2: 交易优化器模块检查</h2>
+        <button onclick="testModuleExistence()">检查模块</button>
+        <div id="test2-result" class="test-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试3: 样式文件检查</h2>
+        <button onclick="testStyles()">检查样式</button>
+        <div id="test3-result" class="test-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试4: 实际页面测试</h2>
+        <p>打开实际的操作页面进行完整测试：</p>
+        <a href="operation.html" target="_blank" style="display: inline-block; padding: 10px 20px; background: #2ecc71; color: white; text-decoration: none; border-radius: 6px; margin-top: 10px;">
+            打开操作页面
+        </a>
+        <div style="margin-top: 15px;">
+            <h4>测试步骤：</h4>
+            <ol>
+                <li>点击上方链接打开操作页面</li>
+                <li>检查交易面板是否正常显示</li>
+                <li>测试股票搜索功能（输入"600"或股票名称）</li>
+                <li>验证买入/卖出切换功能</li>
+                <li>测试价格和数量输入验证</li>
+                <li>检查持仓信息显示</li>
+            </ol>
+        </div>
+    </div>
+    
+    <script>
+        function setResult(elementId, message, isSuccess) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = message;
+            element.className = 'test-result ' + (isSuccess ? 'success' : 'error');
+        }
+        
+        function testFileLoading() {
+            const files = [
+                'operation.html',
+                'styles.css',
+                'trade-optimizer.js',
+                'app.js',
+                'storage.js',
+                'ledger-core.js'
+            ];
+            
+            let allLoaded = true;
+            let results = '<h4>文件加载状态：</h4><ul>';
+            
+            files.forEach(file => {
+                try {
+                    // 尝试通过fetch检查文件是否存在
+                    fetch(file, { method: 'HEAD' })
+                        .then(response => {
+                            const exists = response.ok;
+                            results += `<li>${file}: ${exists ? '✅ 存在' : '❌ 缺失'}</li>`;
+                            if (!exists) allLoaded = false;
+                            
+                            // 更新显示
+                            document.getElementById('test1-result').innerHTML = results + '</ul>';
+                            document.getElementById('test1-result').className = 'test-result ' + (allLoaded ? 'success' : 'error');
+                        })
+                        .catch(() => {
+                            results += `<li>${file}: ❌ 无法访问</li>`;
+                            allLoaded = false;
+                            document.getElementById('test1-result').innerHTML = results + '</ul>';
+                            document.getElementById('test1-result').className = 'test-result error';
+                        });
+                } catch (error) {
+                    results += `<li>${file}: ❌ 检查失败</li>`;
+                    allLoaded = false;
+                }
+            });
+            
+            document.getElementById('test1-result').innerHTML = results + '</ul><p>检查中...</p>';
+        }
+        
+        function testModuleExistence() {
+            const modules = [
+                'window.TradeOptimizer',
+                'window.TradeOptimizer.init',
+                'window.TradeOptimizer.updateState',
+                'window.TradeOptimizer.getTradeData',
+                'window.TradeOptimizer.validateTradeData',
+                'window.TradeOptimizer.clearForm'
+            ];
+            
+            let allExist = true;
+            let results = '<h4>模块检查：</h4><ul>';
+            
+            modules.forEach(modulePath => {
+                try {
+                    const exists = eval(`typeof ${modulePath} !== 'undefined'`);
+                    results += `<li>${modulePath}: ${exists ? '✅ 存在' : '❌ 缺失'}</li>`;
+                    if (!exists) allExist = false;
+                } catch (error) {
+                    results += `<li>${modulePath}: ❌ 检查失败</li>`;
+                    allExist = false;
+                }
+            });
+            
+            setResult('test2-result', results + '</ul>', allExist);
+        }
+        
+        function testStyles() {
+            // 检查关键CSS类是否存在
+            const keyClasses = [
+                '.trade-panel',
+                '.stock-search-wrapper',
+                '.current-holding-info',
+                '.trade-details-grid',
+                '.trade-type-selector',
+                '.trade-submit-btn'
+            ];
+            
+            let results = '<h4>关键CSS类检查：</h4>';
+            results += '<p>注：需要在实际页面中验证样式应用</p>';
+            results += '<ul>';
+            
+            // 这里我们只能检查样式文件是否包含这些类
+            fetch('styles.css')
+                .then(response => response.text())
+                .then(cssText => {
+                    keyClasses.forEach(cssClass => {
+                        const exists = cssText.includes(cssClass);
+                        results += `<li>${cssClass}: ${exists ? '✅ 在样式文件中' : '❌ 未找到'}</li>`;
+                    });
+                    
+                    setResult('test3-result', results + '</ul>', true);
+                })
+                .catch(error => {
+                    setResult('test3-result', '❌ 无法读取样式文件', false);
+                });
+        }
+    </script>
+</body>
+</html>

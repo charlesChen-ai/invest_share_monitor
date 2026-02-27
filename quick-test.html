@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>快速功能测试</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .test { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .pass { background: #d4edda; border-color: #c3e6cb; }
+        .fail { background: #f8d7da; border-color: #f5c6cb; }
+        button { padding: 10px 15px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>交易优化器快速测试</h1>
+    
+    <div class="test">
+        <h3>1. 基本功能检查</h3>
+        <button onclick="checkBasic()">检查基本功能</button>
+        <div id="basic-result"></div>
+    </div>
+    
+    <div class="test">
+        <h3>2. 打开完整测试</h3>
+        <p>点击下方按钮打开完整的操作页面进行测试：</p>
+        <button onclick="window.open('operation.html', '_blank')">打开操作页面</button>
+        <button onclick="window.open('test-optimizer.html', '_blank')">打开详细测试</button>
+    </div>
+    
+    <div class="test">
+        <h3>3. 控制台检查</h3>
+        <p>按 F12 打开开发者工具，查看控制台是否有错误信息。</p>
+        <button onclick="checkConsole()">模拟控制台检查</button>
+        <div id="console-result"></div>
+    </div>
+    
+    <script>
+        function checkBasic() {
+            const result = document.getElementById('basic-result');
+            let html = '<h4>检查结果：</h4><ul>';
+            let allPass = true;
+            
+            // 检查文件
+            const files = ['trade-optimizer.js', 'app.js', 'styles.css'];
+            files.forEach(file => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('HEAD', file, false);
+                try {
+                    xhr.send();
+                    const exists = xhr.status === 200;
+                    html += `<li>${file}: ${exists ? '✅ 存在' : '❌ 缺失'}</li>`;
+                    if (!exists) allPass = false;
+                } catch {
+                    html += `<li>${file}: ❌ 无法访问</li>`;
+                    allPass = false;
+                }
+            });
+            
+            // 检查HTML元素
+            const elements = ['trade-panel', 'stock-search', 'current-holding-info'];
+            elements.forEach(element => {
+                const exists = document.querySelector(`.${element}`) || document.getElementById(element);
+                html += `<li>${element}: ${exists ? '✅ 存在' : '❌ 缺失'}</li>`;
+                if (!exists) allPass = false;
+            });
+            
+            html += '</ul>';
+            result.innerHTML = html;
+            result.parentElement.className = 'test ' + (allPass ? 'pass' : 'fail');
+        }
+        
+        function checkConsole() {
+            const result = document.getElementById('console-result');
+            result.innerHTML = `
+                <h4>控制台检查指南：</h4>
+                <ol>
+                    <li>按 F12 打开开发者工具</li>
+                    <li>切换到 Console（控制台）标签</li>
+                    <li>检查是否有红色错误信息</li>
+                    <li>常见问题：
+                        <ul>
+                            <li>❌ Uncaught ReferenceError: 变量未定义</li>
+                            <li>❌ Uncaught SyntaxError: 语法错误</li>
+                            <li>❌ Failed to load resource: 文件加载失败</li>
+                        </ul>
+                    </li>
+                </ol>
+                <p>如果没有红色错误，通常表示代码运行正常。</p>
+            `;
+        }
+        
+        // 页面加载时自动检查
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('=== 交易优化器测试页面已加载 ===');
+            console.log('请按F12打开控制台查看详细信息');
+        });
+    </script>
+</body>
+</html>
