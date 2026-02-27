@@ -1014,6 +1014,15 @@
         });
       }
     }
+    
+    // 更新交易优化器状态
+    if (window.TradeOptimizer && window.TradeOptimizer.updateState) {
+      try {
+        window.TradeOptimizer.updateState(appState, summary);
+      } catch (error) {
+        console.warn('交易优化器状态更新失败:', error);
+      }
+    }
   }
 
   function renderAll() {
@@ -1027,6 +1036,15 @@
 
     renderDashboard(summary, todaySummary);
     renderOperation(summary, todaySummary);
+    
+    // 初始化交易优化器
+    if (window.TradeOptimizer && window.TradeOptimizer.init) {
+      try {
+        window.TradeOptimizer.init(appState, summary);
+      } catch (error) {
+        console.warn('交易优化器初始化失败:', error);
+      }
+    }
   }
 
   function addMember() {
@@ -1144,20 +1162,43 @@
 
   function applyTrade() {
     const summary = computeSummary(appState);
-    const type = byId("trade-type")?.value === "sell" ? "sell" : "buy";
-    const code = normalizeCode(byId("trade-code")?.value);
-    const name = String(byId("trade-name")?.value || code).trim() || code;
-    const price = number(byId("trade-price")?.value);
-    const quantity = number(byId("trade-quantity")?.value);
-    const sourceMemberId = String(byId("trade-source-member")?.value || "pool").trim() || "pool";
-    const note = String(byId("trade-note")?.value || "").trim();
-
-    if (!code) {
-      showSaveStatus("请输入股票代码");
-      return;
+    
+    // 使用交易优化器获取交易数据
+    let tradeData;
+    if (window.TradeOptimizer && window.TradeOptimizer.getTradeData) {
+      tradeData = window.TradeOptimizer.getTradeData();
+    } else {
+      // 回退到旧逻辑
+      tradeData = {
+        type: byId("trade-type")?.value === "sell" ? "sell" : "buy",
+        code: normalizeCode(byId("trade-code")?.value),
+        name: String(byId("trade-name")?.value || "").trim(),
+        price: number(byId("trade-price")?.value),
+        quantity: number(byId("trade-quantity")?.value),
+        sourceMemberId: String(byId("trade-source-member")?.value || "pool").trim() || "pool",
+        note: String(byId("trade-note")?.value || "").trim()
+      };
     }
-    if (price <= 0 || quantity <= 0) {
-      showSaveStatus("请输入有效的价格和数量");
+    
+    const { type, code, name, price, quantity, sourceMemberId, note } = tradeData;
+    
+    // 使用交易优化器验证数据
+    let validation;
+    if (window.TradeOptimizer && window.TradeOptimizer.validateTradeData) {
+      validation = window.TradeOptimizer.validateTradeData(tradeData);
+    } else {
+      // 基本验证
+      if (!code) {
+        validation = { valid: false, message: "请输入股票代码" };
+      } else if (price <= 0 || quantity <= 0) {
+        validation = { valid: false, message: "请输入有效的价格和数量" };
+      } else {
+        validation = { valid: true };
+      }
+    }
+    
+    if (!validation.valid) {
+      showSaveStatus(validation.message);
       return;
     }
 
@@ -1205,12 +1246,18 @@
       )}，金额 ${formatCurrency(amount)}，资金来源记录：${sourceText}${note ? `；备注：${note}` : ""}`,
     });
 
-    const priceInput = byId("trade-price");
-    const qtyInput = byId("trade-quantity");
-    const noteInput = byId("trade-note");
-    if (priceInput) priceInput.value = "";
-    if (qtyInput) qtyInput.value = "";
-    if (noteInput) noteInput.value = "";
+    // 清空交易表单
+    if (window.TradeOptimizer && window.TradeOptimizer.clearForm) {
+      window.TradeOptimizer.clearForm();
+    } else {
+      // 回退到旧逻辑
+      const priceInput = byId("trade-price");
+      const qtyInput = byId("trade-quantity");
+      const noteInput = byId("trade-note");
+      if (priceInput) priceInput.value = "";
+      if (qtyInput) qtyInput.value = "";
+      if (noteInput) noteInput.value = "";
+    }
 
     persistState({ notice: `交易记录已保存（${type === "buy" ? "买入" : "卖出"}）` });
   }

@@ -190,48 +190,103 @@
       <section class="card reveal delay-6">
         <div class="section-head">
           <h3>股票交易</h3>
-          <p>买入与卖出记录</p>
+          <p>智能交易助手 - 实时持仓提示与价格参考</p>
         </div>
         <form id="trade-form">
-          <div class="editor-grid">
-            <label>
-              交易类型
-              <select id="trade-type">
-                <option value="buy">买入</option>
-                <option value="sell">卖出</option>
-              </select>
-            </label>
-            <label>
-              股票代码
-              <input id="trade-code" type="text" placeholder="600000" />
-            </label>
-            <label>
-              股票名称
-              <input id="trade-name" type="text" placeholder="股票名称" />
-            </label>
-            <label>
-              成交价格
-              <input id="trade-price" type="number" min="0" step="0.001" placeholder="0" />
-            </label>
-            <label>
-              成交数量
-              <input id="trade-quantity" type="number" min="0" step="1" placeholder="0" />
-            </label>
-            <label>
-              资金来源
-              <select id="trade-source-member">
-                <option value="pool">统一资金池</option>
-              </select>
-            </label>
-            <label>
-              备注
-              <input id="trade-note" type="text" placeholder="备注" />
-            </label>
+          <div class="trade-panel">
+            <!-- 交易类型选择 -->
+            <div class="trade-type-selector">
+              <label class="trade-type-option">
+                <input type="radio" name="trade-type" value="buy" id="trade-type-buy" checked>
+                <span class="trade-type-label buy-label">买入</span>
+              </label>
+              <label class="trade-type-option">
+                <input type="radio" name="trade-type" value="sell" id="trade-type-sell">
+                <span class="trade-type-label sell-label">卖出</span>
+              </label>
+            </div>
+
+            <!-- 股票搜索与选择 -->
+            <div class="stock-selector-section">
+              <div class="stock-search-wrapper">
+                <input type="text" id="stock-search" placeholder="输入股票代码或名称搜索..." autocomplete="off">
+                <div id="stock-suggestions" class="stock-suggestions"></div>
+              </div>
+              <div id="current-holding-info" class="current-holding-info">
+                <div class="holding-info-placeholder">
+                  <span>选择股票后显示持仓信息</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 交易详情 -->
+            <div class="trade-details-grid">
+              <div class="trade-price-section">
+                <div class="price-reference">
+                  <span class="price-label">最新参考价</span>
+                  <strong id="latest-price-ref">-</strong>
+                  <small id="price-source">(本地价格)</small>
+                </div>
+                <label class="trade-input-group">
+                  <span>成交价格</span>
+                  <input id="trade-price" type="number" min="0" step="0.001" placeholder="输入价格">
+                  <span class="input-unit">元</span>
+                </label>
+              </div>
+
+              <div class="trade-quantity-section">
+                <div class="quantity-reference">
+                  <span class="quantity-label">当前持仓</span>
+                  <strong id="current-holding-quantity">0</strong>
+                  <small>股</small>
+                  <span class="sellable-label" id="sellable-quantity-label">可卖: <strong>0</strong> 股</span>
+                </div>
+                <label class="trade-input-group">
+                  <span>成交数量</span>
+                  <input id="trade-quantity" type="number" min="0" step="1" placeholder="输入数量">
+                  <span class="input-unit">股</span>
+                </label>
+              </div>
+
+              <div class="trade-amount-section">
+                <div class="amount-preview">
+                  <span class="amount-label">成交金额</span>
+                  <strong id="trade-amount-preview">¥0.00</strong>
+                </div>
+                <div class="cash-balance">
+                  <span>可用现金</span>
+                  <strong id="available-cash">¥0.00</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- 高级选项 -->
+            <div class="trade-advanced-options">
+              <label class="trade-input-group">
+                <span>资金来源</span>
+                <select id="trade-source-member">
+                  <option value="pool">统一资金池</option>
+                </select>
+              </label>
+              <label class="trade-input-group">
+                <span>交易备注</span>
+                <input id="trade-note" type="text" placeholder="可选备注">
+              </label>
+            </div>
+
+            <!-- 交易按钮 -->
+            <div class="trade-actions">
+              <button type="submit" id="submit-trade-btn" class="trade-submit-btn">
+                <span id="trade-submit-text">提交买入交易</span>
+              </button>
+              <button type="button" id="clear-trade-form" class="trade-clear-btn">清空表单</button>
+            </div>
+
+            <!-- 交易状态提示 -->
+            <div id="trade-status" class="trade-status">
+              <p id="trade-preview" class="hint">输入股票代码和价格查看交易详情</p>
+            </div>
           </div>
-          <div class="actions">
-            <button type="submit">提交交易</button>
-          </div>
-          <p id="trade-preview" class="hint">成交金额与现金占用预览</p>
         </form>
       </section>
 
@@ -346,6 +401,7 @@
 
     <script src="./storage.js"></script>
     <script src="./ledger-core.js"></script>
+    <script src="./trade-optimizer.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
