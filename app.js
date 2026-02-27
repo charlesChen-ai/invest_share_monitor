@@ -43,6 +43,12 @@
     return `${number(value).toFixed(2)}%`;
   }
 
+  function formatSignedPercent(value) {
+    const n = number(value);
+    const prefix = n > 0 ? "+" : "";
+    return `${prefix}${n.toFixed(2)}%`;
+  }
+
   function formatDate(value) {
     if (!value) return "未记录";
     const date = new Date(value);
@@ -138,6 +144,18 @@
     if (el) el.textContent = value;
   }
 
+  function setQuoteStatus(text) {
+    setText("price-sync-status", text);
+    setText("dash-holdings-status", text);
+  }
+
+  function setRefreshAllButtonBusy(isBusy) {
+    const button = byId("price-refresh-all-btn");
+    if (!button) return;
+    button.disabled = isBusy;
+    button.classList.toggle("is-loading", isBusy);
+  }
+
   function setPositiveNegative(el, value) {
     if (!el) return;
     el.classList.toggle("positive", number(value) >= 0);
@@ -216,29 +234,165 @@
 
   function persistState({ notice = "已保存到本地" } = {}) {
     appState.updatedAt = new Date().toISOString();
+    const summary = computeSummary(appState);
+    appendOverviewSeriesPoint(summary, { at: appState.updatedAt });
     appState = saveState(appState);
     writeStateToConnectedFile();
     renderAll();
     if (notice) showSaveStatus(notice);
   }
 
-  function ensureTodayBaseline(summary) {
-    if (!appState.dailyBaselines || typeof appState.dailyBaselines !== "object") {
-      appState.dailyBaselines = {};
+  function appendOverviewSeriesPoint(summary, { at = null, force = false } = {}) {
+    if (!summary || typeof summary !== "object") return false;
+    if (!Array.isArray(appState.overviewSeries)) appState.overviewSeries = [];
+
+    const point = {
+      at: at || new Date().toISOString(),
+      totalAsset: round(summary.totalAsset, 6),
+      nav: round(summary.nav, 8),
+      totalProfit: round(summary.totalProfit, 6),
+    };
+
+    const series = appState.overviewSeries;
+    const last = series[series.length - 1];
+    if (last) {
+      const sameValue =
+        Math.abs(number(last.totalAsset) - point.totalAsset) < 0.01 &&
+        Math.abs(number(last.nav) - point.nav) < 0.00000001 &&
+        Math.abs(number(last.totalProfit) - point.totalProfit) < 0.01;
+      const timeDelta = Math.abs(new Date(point.at).getTime() - new Date(last.at).getTime());
+      if (!force && sameValue && timeDelta < 2 * 60 * 1000) {
+        return false;
+      }
     }
 
-    const key = dateKeyOf();
-    if (!appState.dailyBaselines[key]) {
-      appState.dailyBaselines[key] = createDailyBaseline(summary);
-      appState = saveState(appState);
-      writeStateToConnectedFile();
+    series.push(point);
+    if (series.length > 1200) series.splice(0, series.length - 1200);
+    return true;
+  }
+
+  function ensureOverviewSeriesInitialized(summary) {
+    if (!Array.isArray(appState.overviewSeries)) appState.overviewSeries = [];
+    if (appState.overviewSeries.length > 0) return false;
+    return appendOverviewSeriesPoint(summary, { at: appState.updatedAt || new Date().toISOString(), force: true });
+  }
+
+  function buildLineAreaPath(values, width, height, padding = 10) {
+    if (!Array.isArray(values) || !values.length) {
+      return { line: "", area: "" };
     }
 
-    return appState.dailyBaselines[key];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    const usableW = Math.max(1, width - padding * 2);
+    const usableH = Math.max(1, height - padding * 2);
+
+    const points = values.map((value, index) => {
+      const ratioX = values.length === 1 ? 0 : index / (values.length - 1);
+      const x = padding + ratioX * usableW;
+      const y = padding + ((max - value) / span) * usableH;
+      return { x, y };
+    });
+
+    const line = points.map((p, index) => `${index === 0 ? "M" : "L"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+    const first = points[0];
+    const last = points[points.length - 1];
+    const baseY = (height - padding).toFixed(2);
+    const area = `${line} L${last.x.toFixed(2)} ${baseY} L${first.x.toFixed(2)} ${baseY} Z`;
+
+    return { line, area };
+  }
+
+  function startOfLocalDay(date = new Date()) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  function findPreviousClosePoint(dayStart) {
+    const targetTime = dayStart.getTime();
+    const series = Array.isArray(appState.overviewSeries) ? appState.overviewSeries : [];
+
+    for (let i = series.length - 1; i >= 0; i -= 1) {
+      const point = series[i];
+      const pointTime = new Date(point?.at).getTime();
+      if (!Number.isFinite(pointTime)) continue;
+      if (pointTime < targetTime) {
+        return {
+          at: point.at,
+          totalAsset: round(point.totalAsset, 6),
+          nav: round(point.nav, 8),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function buildTodayBaseline(summary) {
+    const dayStart = startOfLocalDay();
+    const previousClose = findPreviousClosePoint(dayStart);
+    if (!previousClose || previousClose.nav <= 0) {
+      const fallback = createDailyBaseline(summary);
+      return {
+        ...fallback,
+        totalInvested: round(summary.totalInvested, 6),
+        nav: round(summary.nav, 8),
+      };
+    }
+
+    const memberAssets = {};
+    const memberInvested = {};
+    const memberShares = {};
+    const validMemberIds = new Set(summary.members.map((member) => member.id));
+    let totalInvested = 0;
+
+    summary.members.forEach((member) => {
+      memberAssets[member.id] = 0;
+      memberInvested[member.id] = 0;
+      memberShares[member.id] = 0;
+    });
+
+    const subs = Array.isArray(appState.subscriptions) ? appState.subscriptions : [];
+    subs.forEach((sub) => {
+      const memberId = String(sub?.memberId || "").trim();
+      const atTime = new Date(sub?.at).getTime();
+      if (!validMemberIds.has(memberId) || !Number.isFinite(atTime) || atTime >= dayStart.getTime()) return;
+      memberInvested[memberId] += number(sub.amount);
+      memberShares[memberId] += number(sub.shares);
+      totalInvested += number(sub.amount);
+    });
+
+    const withdrawals = Array.isArray(appState.withdrawals) ? appState.withdrawals : [];
+    withdrawals.forEach((wd) => {
+      const memberId = String(wd?.memberId || "").trim();
+      const atTime = new Date(wd?.at).getTime();
+      if (!validMemberIds.has(memberId) || !Number.isFinite(atTime) || atTime >= dayStart.getTime()) return;
+      memberInvested[memberId] -= number(wd.amount);
+      memberShares[memberId] -= number(wd.shares);
+      totalInvested -= number(wd.amount);
+    });
+
+    summary.members.forEach((member) => {
+      memberAssets[member.id] = round(Math.max(0, memberShares[member.id]) * previousClose.nav, 6);
+      memberInvested[member.id] = round(memberInvested[member.id], 6);
+      memberShares[member.id] = round(Math.max(0, memberShares[member.id]), 8);
+    });
+
+    return {
+      at: previousClose.at,
+      totalAsset: round(previousClose.totalAsset, 6),
+      totalInvested: round(totalInvested, 6),
+      nav: round(previousClose.nav, 8),
+      memberAssets,
+      memberInvested,
+      memberShares,
+    };
   }
 
   function computeTodaySummary(summary) {
-    const baseline = ensureTodayBaseline(summary);
+    const baseline = buildTodayBaseline(summary);
     const rows = summary.memberRows.map((member) => {
       const baseAsset = number(baseline.memberAssets?.[member.id]);
       const baseInvested = number(baseline.memberInvested?.[member.id]);
@@ -256,7 +410,10 @@
 
     const totalTodayProfit = rows.reduce((sum, row) => sum + row.todayProfit, 0);
     const baselineAsset = number(baseline.totalAsset);
-    const todayRate = baselineAsset > 0 ? (totalTodayProfit / baselineAsset) * 100 : 0;
+    const baselineInvestedTotal = number(baseline.totalInvested);
+    const totalNetFlowToday = round(summary.totalInvested - baselineInvestedTotal, 6);
+    const adjustedBaselineAsset = round(baselineAsset + totalNetFlowToday, 6);
+    const todayRate = adjustedBaselineAsset > 0 ? (totalTodayProfit / adjustedBaselineAsset) * 100 : 0;
 
     return {
       key: dateKeyOf(),
@@ -265,11 +422,116 @@
       totalTodayProfit,
       todayRate,
       baselineAsset,
+      adjustedBaselineAsset,
+      totalNetFlowToday,
     };
   }
 
   function memberNameOf(memberId, summary) {
     return summary.members.find((member) => member.id === memberId)?.name || "未分配成员";
+  }
+
+  function renderOverviewCurve() {
+    const lineEl = byId("dash-overview-curve-line");
+    const areaEl = byId("dash-overview-curve-area");
+    if (!lineEl || !areaEl) return;
+
+    const emptyEl = byId("dash-overview-curve-empty");
+    const changeEl = byId("dash-overview-nav-change");
+    const raw = Array.isArray(appState.overviewSeries) ? appState.overviewSeries : [];
+    const series = raw
+      .slice(-120)
+      .map((item) => ({
+        at: item?.at,
+        nav: number(item?.nav),
+      }))
+      .filter((item) => item.nav > 0 && !Number.isNaN(new Date(item.at).getTime()));
+
+    const count = series.length;
+    if (!count) {
+      lineEl.setAttribute("d", "");
+      areaEl.setAttribute("d", "");
+      setText("dash-overview-start-nav", "起始净值：—");
+      setText("dash-overview-end-nav", "当前净值：—");
+      setText("dash-overview-point-count", "历史点数：0");
+      setText("dash-overview-nav-change", "区间变化：—");
+      clearPositiveNegative(changeEl);
+      if (emptyEl) emptyEl.classList.remove("hidden");
+      return;
+    }
+
+    const values = count === 1 ? [series[0].nav, series[0].nav] : series.map((item) => item.nav);
+    const path = buildLineAreaPath(values, 420, 150, 10);
+    lineEl.setAttribute("d", path.line);
+    areaEl.setAttribute("d", path.area);
+    if (emptyEl) emptyEl.classList.add("hidden");
+
+    const startNav = series[0].nav;
+    const endNav = series[count - 1].nav;
+    setText("dash-overview-start-nav", `起始净值：${formatUnits(startNav, 8)}`);
+    setText("dash-overview-end-nav", `当前净值：${formatUnits(endNav, 8)}`);
+    setText("dash-overview-point-count", `历史点数：${count}`);
+
+    if (count >= 2 && startNav > 0) {
+      const navChange = ((endNav / startNav) - 1) * 100;
+      setText("dash-overview-nav-change", `区间变化：${formatSignedPercent(navChange)}`);
+      setPositiveNegative(changeEl, navChange);
+    } else {
+      setText("dash-overview-nav-change", "区间变化：—");
+      clearPositiveNegative(changeEl);
+    }
+  }
+
+  function renderOperationMiniCurve(summary) {
+    const lineEl = byId("op-mini-curve-line");
+    const areaEl = byId("op-mini-curve-area");
+    const emptyEl = byId("op-mini-curve-empty");
+    const changeEl = byId("op-mini-curve-change");
+    if (!lineEl || !areaEl) return;
+
+    const totalAsset = Math.max(0, number(summary?.totalAsset));
+    const stockRatio = totalAsset > 0 ? number(summary?.holdingMarketValueTotal) / totalAsset : 0;
+    const cashRatio = totalAsset > 0 ? number(summary?.cash) / totalAsset : 0;
+    setText("op-stock-ratio", formatPercent(stockRatio * 100));
+    setText("op-cash-ratio", formatPercent(cashRatio * 100));
+
+    const stockSeg = byId("op-stock-seg");
+    const cashSeg = byId("op-cash-seg");
+    if (stockSeg) stockSeg.style.width = `${Math.max(0, Math.min(100, stockRatio * 100)).toFixed(2)}%`;
+    if (cashSeg) cashSeg.style.width = `${Math.max(0, Math.min(100, cashRatio * 100)).toFixed(2)}%`;
+
+    const raw = Array.isArray(appState.overviewSeries) ? appState.overviewSeries : [];
+    const series = raw
+      .map((item) => ({ at: item?.at, totalAsset: number(item?.totalAsset) }))
+      .filter((item) => item.totalAsset >= 0)
+      .slice(-96);
+
+    if (!series.length) {
+      lineEl.setAttribute("d", "");
+      areaEl.setAttribute("d", "");
+      setText("op-mini-curve-change", "—");
+      clearPositiveNegative(changeEl);
+      if (emptyEl) emptyEl.classList.remove("hidden");
+      return;
+    }
+
+    const values =
+      series.length === 1 ? [series[0].totalAsset, series[0].totalAsset] : series.map((item) => item.totalAsset);
+    const path = buildLineAreaPath(values, 340, 96, 6);
+    lineEl.setAttribute("d", path.line);
+    areaEl.setAttribute("d", path.area);
+    if (emptyEl) emptyEl.classList.add("hidden");
+
+    const startAsset = values[0];
+    const endAsset = values[values.length - 1];
+    if (series.length >= 2 && startAsset > 0) {
+      const change = ((endAsset / startAsset) - 1) * 100;
+      setText("op-mini-curve-change", formatSignedPercent(change));
+      setPositiveNegative(changeEl, change);
+    } else {
+      setText("op-mini-curve-change", "—");
+      clearPositiveNegative(changeEl);
+    }
   }
 
   function renderDashboard(summary, todaySummary) {
@@ -281,30 +543,30 @@
     setText("dash-total-profit", formatCurrency(summary.totalProfit));
     setText(
       "dash-nav",
-      emptyLedger ? "基金净值：未建立（请先在操作页记录首笔入金）" : `基金净值：${formatUnits(summary.nav, 8)}`
+      emptyLedger ? "基金净值：—" : `基金净值：${formatUnits(summary.nav, 8)}`
     );
     setText(
       "dash-total-invested",
-      emptyLedger ? "累计净入金：¥0.00（暂无资金记录）" : `累计净入金：${formatCurrency(summary.totalInvested)}`
+      emptyLedger ? "累计净入金：¥0.00" : `累计净入金：${formatCurrency(summary.totalInvested)}`
     );
     setText("dash-total-subscribed", `累计入金：${formatCurrency(summary.totalSubscribedAmount || 0)}`);
     setText("dash-total-withdrawn", `累计出金：${formatCurrency(summary.totalWithdrawnAmount || 0)}`);
     setText(
       "dash-total-shares",
-      emptyLedger ? "总份额：0.00000000（未发行）" : `总份额：${formatUnits(summary.totalShares, 8)}`
+      emptyLedger ? "总份额：—" : `总份额：${formatUnits(summary.totalShares, 8)}`
     );
     setText("dash-cash", `账户现金：${formatCurrency(summary.cash)}`);
     setText(
       "dash-holding-market",
-      emptyLedger ? "股票市值：¥0.00（暂无持仓）" : `股票市值：${formatCurrency(summary.holdingMarketValueTotal)}`
+      emptyLedger ? "股票市值：¥0.00" : `股票市值：${formatCurrency(summary.holdingMarketValueTotal)}`
     );
     setText("dash-updated-at", formatDate(appState.updatedAt));
-    setText(
-      "dash-empty-tip",
-      emptyLedger
-        ? "当前无数据，请前往操作页先新增成员并记录首笔入金。"
-        : "展示口径：成员资产与收益均按份额自动分配。"
-    );
+    const emptyTipEl = byId("dash-empty-tip");
+    if (emptyTipEl) {
+      emptyTipEl.textContent = emptyLedger ? "暂无可展示数据" : "";
+      emptyTipEl.classList.toggle("hidden", !emptyLedger);
+    }
+    renderOverviewCurve();
 
     const totalProfitEl = byId("dash-total-profit");
     if (emptyLedger) {
@@ -313,160 +575,221 @@
       setPositiveNegative(totalProfitEl, summary.totalProfit);
     }
 
+    const totalRate = summary.totalInvested > 0 ? (summary.totalProfit / summary.totalInvested) * 100 : 0;
+    setText("dash-total-profit-invested", formatCurrency(summary.totalInvested));
+    setText("dash-total-profit-rate", emptyLedger ? "—" : formatSignedPercent(totalRate));
+    setText("dash-total-profit-badge", emptyLedger ? "收益率 —" : `收益率 ${formatSignedPercent(totalRate)}`);
+    setText("dash-total-profit-sub", emptyLedger ? "暂无收益记录" : "截至当前");
+    if (emptyLedger) {
+      clearPositiveNegative(byId("dash-total-profit-rate"));
+      clearPositiveNegative(byId("dash-total-profit-badge"));
+    } else {
+      setPositiveNegative(byId("dash-total-profit-rate"), totalRate);
+      setPositiveNegative(byId("dash-total-profit-badge"), totalRate);
+    }
+
+    const totalBar = byId("dash-total-profit-bar");
+    if (totalBar) {
+      const width = emptyLedger ? 0 : Math.min(100, Math.max(8, Math.abs(totalRate)));
+      totalBar.style.width = `${width}%`;
+      totalBar.classList.toggle("loss", summary.totalProfit < 0);
+      totalBar.classList.toggle("gain", summary.totalProfit >= 0);
+    }
+
     setText("dash-today-profit", formatCurrency(todaySummary.totalTodayProfit));
     setText("dash-today-rate", emptyLedger ? "今日收益率：—" : `今日收益率：${formatPercent(todaySummary.todayRate)}`);
+    setText("dash-today-base-asset", emptyLedger ? "—" : formatCurrency(todaySummary.adjustedBaselineAsset));
+    const todayShareOfTotal =
+      Math.abs(summary.totalProfit) > 0 ? (todaySummary.totalTodayProfit / Math.abs(summary.totalProfit)) * 100 : 0;
+    setText("dash-today-share-of-total", emptyLedger ? "—" : formatSignedPercent(todayShareOfTotal));
     setText(
-      "dash-today-base",
-      emptyLedger ? "当日基线总资产：—（首笔入金后自动建立）" : `当日基线总资产：${formatCurrency(todaySummary.baselineAsset)}`
+      "dash-today-profit-badge",
+      emptyLedger ? "当日基线 —" : `当日基线 ${formatCurrency(todaySummary.adjustedBaselineAsset)}`
     );
     if (emptyLedger) {
       clearPositiveNegative(byId("dash-today-profit"));
+      clearPositiveNegative(byId("dash-today-share-of-total"));
+      clearPositiveNegative(byId("dash-today-profit-badge"));
     } else {
       setPositiveNegative(byId("dash-today-profit"), todaySummary.totalTodayProfit);
+      setPositiveNegative(byId("dash-today-share-of-total"), todayShareOfTotal);
+      setPositiveNegative(byId("dash-today-profit-badge"), todaySummary.totalTodayProfit);
     }
 
-    const memberBody = byId("dash-member-body");
-    if (memberBody) {
-      memberBody.innerHTML = "";
+    const todayBar = byId("dash-today-profit-bar");
+    if (todayBar) {
+      const width = emptyLedger ? 0 : Math.min(100, Math.max(8, Math.abs(todaySummary.todayRate) * 2));
+      todayBar.style.width = `${width}%`;
+      todayBar.classList.toggle("loss", todaySummary.totalTodayProfit < 0);
+      todayBar.classList.toggle("gain", todaySummary.totalTodayProfit >= 0);
+    }
+
+    const memberCards = byId("dash-member-cards");
+    if (memberCards) {
+      memberCards.innerHTML = "";
       if (!todaySummary.rows.length) {
-        const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="8">暂无成员与资金记录</td>';
-        memberBody.appendChild(row);
+        const empty = document.createElement("p");
+        empty.className = "member-card-empty";
+        empty.textContent = "暂无成员数据";
+        memberCards.appendChild(empty);
       } else {
         todaySummary.rows.forEach((member) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${member.name}</td>
-            <td>${formatCurrency(member.invested)}</td>
-            <td>${formatUnits(member.shares, 8)}</td>
-            <td>${formatPercent(member.ownershipRatio * 100)}</td>
-            <td>${formatCurrency(member.asset)}</td>
-            <td class="profit-cell">${formatCurrency(member.totalProfit)}</td>
-            <td class="today-cell">${formatCurrency(member.todayProfit)}</td>
-            <td>${formatCurrency(member.netFlowToday)}</td>
+          const memberProfitRate = member.invested > 0 ? (member.totalProfit / member.invested) * 100 : 0;
+          const memberProfitRateText = member.invested > 0 ? formatSignedPercent(memberProfitRate) : "—";
+          const card = document.createElement("article");
+          card.className = `member-profit-card ${member.totalProfit >= 0 ? "gain" : "loss"}`;
+          card.innerHTML = `
+            <div class="member-card-head">
+              <p class="member-card-name">${member.name}</p>
+            </div>
+            <div class="member-card-profit-hero">
+              <span>当前应得总收益</span>
+              <strong class="member-total-profit member-total-profit-lg">${formatCurrency(member.totalProfit)}</strong>
+            </div>
+            <div class="member-card-today">
+              <span>今日收益</span>
+              <strong class="member-today-profit member-today-profit-lg">${formatCurrency(member.todayProfit)}</strong>
+            </div>
+            <div class="member-card-rate">
+              <span>收益率（按净入金）</span>
+              <strong class="member-profit-rate">${memberProfitRateText}</strong>
+            </div>
+            <details class="member-card-details">
+              <summary>收益明细</summary>
+              <div class="member-card-meta">
+                <p><span>当前资产</span><strong>${formatCurrency(member.asset)}</strong></p>
+                <p><span>累计净入金</span><strong>${formatCurrency(member.invested)}</strong></p>
+                <p><span>持有份额</span><strong>${formatUnits(member.shares, 8)}</strong></p>
+                <p><span>份额占比</span><strong>${formatPercent(member.ownershipRatio * 100)}</strong></p>
+                <p><span>今日净入金</span><strong>${formatCurrency(member.netFlowToday)}</strong></p>
+              </div>
+            </details>
           `;
-          setPositiveNegative(row.querySelector(".profit-cell"), member.totalProfit);
-          setPositiveNegative(row.querySelector(".today-cell"), member.todayProfit);
-          memberBody.appendChild(row);
+
+          setPositiveNegative(card.querySelector(".member-total-profit"), member.totalProfit);
+          setPositiveNegative(card.querySelector(".member-today-profit"), member.todayProfit);
+          if (member.invested > 0) {
+            setPositiveNegative(card.querySelector(".member-profit-rate"), memberProfitRate);
+          } else {
+            clearPositiveNegative(card.querySelector(".member-profit-rate"));
+          }
+          memberCards.appendChild(card);
         });
       }
     }
 
-    const holdingBody = byId("dash-holdings-body");
-    if (holdingBody) {
-      holdingBody.innerHTML = "";
+    const holdingList = byId("dash-holdings-list");
+    if (holdingList) {
+      holdingList.innerHTML = "";
       if (!summary.holdings.length) {
-        const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="8">暂无股票持仓</td>';
-        holdingBody.appendChild(row);
+        const empty = document.createElement("p");
+        empty.className = "dash-holding-empty";
+        empty.textContent = "暂无持仓数据";
+        holdingList.appendChild(empty);
       } else {
         summary.holdings.forEach((holding) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${holding.code}</td>
-            <td>${holding.name || holding.code}</td>
-            <td>${formatUnits(holding.quantity, 3)}</td>
-            <td>${formatCurrency(holding.avgCost)}</td>
-            <td>${formatCurrency(holding.currentPrice)}</td>
-            <td>${formatCurrency(holding.costValue)}</td>
-            <td>${formatCurrency(holding.marketValue)}</td>
-            <td class="pnl-cell">${formatCurrency(holding.pnl)}</td>
+          const card = document.createElement("article");
+          card.className = "dash-holding-card";
+          card.innerHTML = `
+            <div class="dash-holding-head">
+              <span class="dash-holding-code">${holding.code}</span>
+              <p class="dash-holding-name">${holding.name || holding.code}</p>
+            </div>
+            <div class="dash-holding-main">
+              <p class="dash-holding-market">
+                <span>持仓市值</span>
+                <strong>${formatCurrency(holding.marketValue)}</strong>
+              </p>
+              <p class="dash-holding-pnl-wrap">
+                <span>浮动收益</span>
+                <strong class="dash-holding-pnl">${formatCurrency(holding.pnl)}</strong>
+              </p>
+            </div>
+            <div class="dash-holding-meta">
+              <p><span>现价</span><strong>${formatCurrency(holding.currentPrice)}</strong></p>
+              <p><span>数量</span><strong>${formatUnits(holding.quantity, 3)}</strong></p>
+              <p><span>成本价</span><strong>${formatCurrency(holding.avgCost)}</strong></p>
+            </div>
           `;
-          setPositiveNegative(row.querySelector(".pnl-cell"), holding.pnl);
-          holdingBody.appendChild(row);
+          setPositiveNegative(card.querySelector(".dash-holding-pnl"), holding.pnl);
+          holdingList.appendChild(card);
         });
       }
     }
 
-    const logBody = byId("dash-log-body");
-    if (logBody) {
-      logBody.innerHTML = "";
-      const logs = Array.isArray(appState.logs) ? appState.logs.slice(0, 20) : [];
-      if (!logs.length) {
-        const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="3">暂无记录</td>';
-        logBody.appendChild(row);
-      } else {
-        logs.forEach((log) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${formatDate(log.at)}</td>
-            <td>${log.type}</td>
-            <td>${log.detail}</td>
-          `;
-          logBody.appendChild(row);
-        });
-      }
-    }
   }
 
   function renderOperation(summary, todaySummary) {
     if (!byId("operation-page")) return;
 
     const emptyLedger = isEmptyLedger(summary);
-    setText(
-      "op-total-asset",
-      emptyLedger ? "总资产：¥0.00（暂无数据）" : `总资产：${formatCurrency(summary.totalAsset)}`
-    );
-    setText(
-      "op-nav",
-      emptyLedger ? "基金净值：未建立（无份额）" : `基金净值：${formatUnits(summary.nav, 8)}`
-    );
-    setText("op-cash", `账户现金：${formatCurrency(summary.cash)}`);
-    setText("op-total-profit", `累计总收益：${formatCurrency(summary.totalProfit)}`);
-    setText(
-      "op-holding-market",
-      emptyLedger ? "股票市值：¥0.00（暂无持仓）" : `股票市值：${formatCurrency(summary.holdingMarketValueTotal)}`
-    );
-    setText(
-      "op-total-invested",
-      emptyLedger ? "累计净入金：¥0.00（暂无资金记录）" : `累计净入金：${formatCurrency(summary.totalInvested)}`
-    );
-    setText("op-total-subscribed", `累计入金：${formatCurrency(summary.totalSubscribedAmount || 0)}`);
-    setText("op-total-withdrawn", `累计出金：${formatCurrency(summary.totalWithdrawnAmount || 0)}`);
-    setText("op-updated-at", `更新时间：${formatDate(appState.updatedAt)}`);
-    setText(
-      "op-overview-tip",
-      emptyLedger
-        ? "当前是空账本。请按顺序：新增成员 → 记录入金 → 记录交易 → 更新现价。"
-        : "当前概览会根据入金/出金份额、交易与现价自动计算，无需手动填写收益。"
-    );
+    setText("op-total-asset", formatCurrency(summary.totalAsset));
+    setText("op-nav", emptyLedger ? "—" : formatUnits(summary.nav, 8));
+    setText("op-cash", formatCurrency(summary.cash));
+    setText("op-total-profit", formatCurrency(summary.totalProfit));
+    setText("op-holding-market", formatCurrency(summary.holdingMarketValueTotal));
+    setText("op-total-invested", formatCurrency(summary.totalInvested));
+    setText("op-total-subscribed", formatCurrency(summary.totalSubscribedAmount || 0));
+    setText("op-total-withdrawn", formatCurrency(summary.totalWithdrawnAmount || 0));
+    setText("op-updated-at", formatDate(appState.updatedAt));
+    setText("op-overview-tip", emptyLedger ? "当前无有效记录" : "");
+    byId("op-overview-tip")?.classList.toggle("hidden", !emptyLedger);
     if (emptyLedger) {
       clearPositiveNegative(byId("op-total-profit"));
     } else {
       setPositiveNegative(byId("op-total-profit"), summary.totalProfit);
     }
 
-    setText("op-today-total", `当日总收益：${formatCurrency(todaySummary.totalTodayProfit)}`);
-    setText("op-today-rate", emptyLedger ? "今日收益率：—" : `今日收益率：${formatPercent(todaySummary.todayRate)}`);
+    setText("op-today-total", formatCurrency(todaySummary.totalTodayProfit));
+    setText("op-today-rate", emptyLedger ? "—" : formatPercent(todaySummary.todayRate));
     if (emptyLedger) {
       clearPositiveNegative(byId("op-today-total"));
     } else {
       setPositiveNegative(byId("op-today-total"), todaySummary.totalTodayProfit);
     }
 
-    const memberBody = byId("member-body");
-    if (memberBody) {
-      memberBody.innerHTML = "";
+    renderOperationMiniCurve(summary);
+
+    const memberShareList = byId("member-share-list");
+    if (memberShareList) {
+      memberShareList.innerHTML = "";
       if (!todaySummary.rows.length) {
-        const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="7">暂无成员</td>';
-        memberBody.appendChild(row);
+        const empty = document.createElement("p");
+        empty.className = "member-share-empty";
+        empty.textContent = "暂无成员";
+        memberShareList.appendChild(empty);
       } else {
         todaySummary.rows.forEach((member) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${member.name}</td>
-            <td>${formatCurrency(member.invested)}</td>
-            <td>${formatUnits(member.shares, 8)}</td>
-            <td>${formatCurrency(member.asset)}</td>
-            <td class="profit-cell">${formatCurrency(member.totalProfit)}</td>
-            <td class="today-cell">${formatCurrency(member.todayProfit)}</td>
-            <td>${formatCurrency(member.netFlowToday)}</td>
+          const card = document.createElement("article");
+          card.className = `member-share-item ${member.totalProfit >= 0 ? "gain" : "loss"}`;
+          card.innerHTML = `
+            <div class="member-share-head">
+              <p class="member-share-name">${member.name}</p>
+              <p class="member-share-chip">份额 ${formatUnits(member.shares, 4)}</p>
+            </div>
+            <div class="member-share-focus">
+              <p>
+                <span>累计净入金</span>
+                <strong>${formatCurrency(member.invested)}</strong>
+              </p>
+              <p>
+                <span>总收益</span>
+                <strong class="member-share-total-profit">${formatCurrency(member.totalProfit)}</strong>
+              </p>
+            </div>
+            <details class="member-share-detail">
+              <summary>查看其他信息</summary>
+              <div class="member-share-meta">
+                <p><span>当前资产</span><strong>${formatCurrency(member.asset)}</strong></p>
+                <p><span>当日收益</span><strong class="member-share-today-profit">${formatCurrency(member.todayProfit)}</strong></p>
+                <p><span>今日净入金</span><strong>${formatCurrency(member.netFlowToday)}</strong></p>
+                <p><span>份额占比</span><strong>${formatPercent(member.ownershipRatio * 100)}</strong></p>
+              </div>
+            </details>
           `;
-          setPositiveNegative(row.querySelector(".profit-cell"), member.totalProfit);
-          setPositiveNegative(row.querySelector(".today-cell"), member.todayProfit);
-          memberBody.appendChild(row);
+          setPositiveNegative(card.querySelector(".member-share-total-profit"), member.totalProfit);
+          setPositiveNegative(card.querySelector(".member-share-today-profit"), member.todayProfit);
+          memberShareList.appendChild(card);
         });
       }
     }
@@ -478,7 +801,7 @@
     const optionHtml = summary.members.map((member) => `<option value="${member.id}">${member.name}</option>`).join("");
     if (fundFlowMemberSelect) {
       const previous = fundFlowMemberSelect.value;
-      fundFlowMemberSelect.innerHTML = optionHtml || '<option value="">请先新增成员</option>';
+      fundFlowMemberSelect.innerHTML = optionHtml || '<option value="">暂无成员</option>';
       if (summary.members.some((member) => member.id === previous)) {
         fundFlowMemberSelect.value = previous;
       } else if (!summary.members.length) {
@@ -505,39 +828,30 @@
     }
 
     if (!summary.members.length) {
-      setText("fund-flow-preview", "请先新增成员，再记录资金操作。");
+      setText("fund-flow-preview", "暂无成员");
     } else if (!flowMemberId || !flowMember) {
       setText("fund-flow-preview", "请选择成员。");
     } else if (flowDirection === "in") {
       if (summary.totalShares <= 0) {
-        setText(
-          "fund-flow-preview",
-          `当前为初始阶段，首笔入金按净值 1.00000000 发行份额；本次预计份额 ${formatUnits(flowShares, 8)}。`
-        );
+        setText("fund-flow-preview", `预计份额 ${formatUnits(flowShares, 8)}`);
       } else {
         setText(
           "fund-flow-preview",
-          `本次入金将按当前净值 ${formatUnits(navNow, 8)} 购买 ${formatUnits(flowShares, 8)} 份权益。`
+          `净值 ${formatUnits(navNow, 8)} / 预计份额 ${formatUnits(flowShares, 8)}`
         );
       }
     } else if (summary.totalShares <= 0) {
-      setText("fund-flow-preview", "当前无已发行份额，无法出金。");
+      setText("fund-flow-preview", "暂无可赎回份额");
     } else if (flowMember.shares <= 0) {
-      setText("fund-flow-preview", "该成员当前无可赎回份额。");
+      setText("fund-flow-preview", "该成员暂无可赎回份额");
     } else if (flowAmount <= 0) {
-      setText("fund-flow-preview", `该成员可赎回资产约 ${formatCurrency(flowMember.asset)}。`);
+      setText("fund-flow-preview", `可赎回约 ${formatCurrency(flowMember.asset)}`);
     } else if (flowAmount > summary.cash + 1e-8) {
-      setText("fund-flow-preview", `出金金额超过账户现金，可用现金 ${formatCurrency(summary.cash)}。`);
+      setText("fund-flow-preview", `现金不足（可用 ${formatCurrency(summary.cash)}）`);
     } else if (flowShares > flowMember.shares + 1e-8) {
-      setText(
-        "fund-flow-preview",
-        `预计赎回份额 ${formatUnits(flowShares, 8)} 超过成员可用份额 ${formatUnits(flowMember.shares, 8)}。`
-      );
+      setText("fund-flow-preview", `超出可赎回份额（上限 ${formatUnits(flowMember.shares, 8)}）`);
     } else {
-      setText(
-        "fund-flow-preview",
-        `本次出金将按当前净值 ${formatUnits(navNow, 8)} 赎回 ${formatUnits(flowShares, 8)} 份权益。`
-      );
+      setText("fund-flow-preview", `净值 ${formatUnits(navNow, 8)} / 赎回份额 ${formatUnits(flowShares, 8)}`);
     }
 
     const tradeType = byId("trade-type")?.value === "sell" ? "sell" : "buy";
@@ -545,42 +859,52 @@
     const tradeQty = number(byId("trade-quantity")?.value);
     const tradeAmount = tradePrice * tradeQty;
     if (summary.cash <= 0 && tradeType === "buy") {
-      setText("trade-preview", "请先记录入金，建立可用资金后再买入股票。");
+      setText("trade-preview", "可用现金不足");
     } else {
       setText(
         "trade-preview",
         tradeAmount > 0
-          ? `${tradeType === "buy" ? "买入" : "卖出"}金额：${formatCurrency(tradeAmount)}；当前可用现金：${formatCurrency(summary.cash)}`
-          : "填写价格和数量后可预览交易金额。"
+          ? `${tradeType === "buy" ? "买入" : "卖出"}金额 ${formatCurrency(tradeAmount)} / 可用现金 ${formatCurrency(summary.cash)}`
+          : "输入价格与数量后显示成交金额"
       );
     }
 
-    const priceBody = byId("price-body");
-    if (priceBody) {
-      priceBody.innerHTML = "";
+    const priceCardList = byId("price-card-list");
+    if (priceCardList) {
+      priceCardList.innerHTML = "";
       if (!summary.holdings.length) {
-        const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="6">暂无持仓，无法更新价格</td>';
-        priceBody.appendChild(row);
+        const empty = document.createElement("p");
+        empty.className = "price-card-empty";
+        empty.textContent = "暂无持仓";
+        priceCardList.appendChild(empty);
+        setText("price-sync-status", "暂无持仓，无法获取现价");
+        setQuoteStatus("暂无持仓，无法获取现价");
       } else {
+        setQuoteStatus(`当前持仓 ${summary.holdings.length} 只，可刷新最新股价`);
         summary.holdings.forEach((holding) => {
-          const row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${holding.code}</td>
-            <td>${holding.name || holding.code}</td>
-            <td>${formatUnits(holding.quantity, 3)}</td>
-            <td>${formatCurrency(holding.currentPrice)}</td>
-            <td>
-              <input class="price-input" data-code="${holding.code}" type="number" min="0" step="0.001" value="${holding.currentPrice}" />
-            </td>
-            <td>
-              <div class="row-actions">
-                <button type="button" class="quote-refresh price-auto" data-code="${holding.code}">自动获取</button>
-                <button type="button" class="price-save" data-code="${holding.code}">保存</button>
+          const card = document.createElement("article");
+          card.className = "price-card";
+          card.dataset.code = holding.code;
+          card.innerHTML = `
+            <div class="price-card-head">
+              <div>
+                <p class="price-card-code">${holding.code}</p>
+                <p class="price-card-name">${holding.name || holding.code}</p>
               </div>
-            </td>
+              <button type="button" class="quote-refresh price-auto" data-code="${holding.code}">网络刷新</button>
+            </div>
+            <div class="price-card-metrics">
+              <p><span>持仓数量</span><strong>${formatUnits(holding.quantity, 3)} 股</strong></p>
+              <p><span>当前现价</span><strong>${formatCurrency(holding.currentPrice)}</strong></p>
+              <p><span>持仓市值</span><strong>${formatCurrency(holding.marketValue)}</strong></p>
+            </div>
+            <div class="price-fallback-row">
+              <input class="price-input" data-code="${holding.code}" type="number" min="0" step="0.001" value="${holding.currentPrice}" />
+              <button type="button" class="ghost price-save" data-code="${holding.code}">保存本地现价</button>
+            </div>
+            <p class="price-card-tip">网络失败时可使用本地现价兜底</p>
           `;
-          priceBody.appendChild(row);
+          priceCardList.appendChild(card);
         });
       }
     }
@@ -603,7 +927,7 @@
 
       if (!fundFlowRows.length) {
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="7">暂无资金进出记录</td>';
+        row.innerHTML = '<td colspan="7">暂无记录</td>';
         subHistoryBody.appendChild(row);
       } else {
         fundFlowRows.slice(0, 120).forEach((flow) => {
@@ -627,7 +951,7 @@
       tradeHistoryBody.innerHTML = "";
       if (!summary.tradeRows.length) {
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="9">暂无交易记录</td>';
+        row.innerHTML = '<td colspan="9">暂无记录</td>';
         tradeHistoryBody.appendChild(row);
       } else {
         summary.tradeRows.slice(0, 120).forEach((trade) => {
@@ -656,7 +980,7 @@
       const notes = Array.isArray(appState.notes) ? appState.notes.slice(0, 80) : [];
       if (!notes.length) {
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="2">暂无管理员备注</td>';
+        row.innerHTML = '<td colspan="2">暂无记录</td>';
         noteBody.appendChild(row);
       } else {
         notes.forEach((note) => {
@@ -676,7 +1000,7 @@
       const logs = Array.isArray(appState.logs) ? appState.logs.slice(0, 120) : [];
       if (!logs.length) {
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="3">暂无操作历史</td>';
+        row.innerHTML = '<td colspan="3">暂无记录</td>';
         logBody.appendChild(row);
       } else {
         logs.forEach((log) => {
@@ -694,6 +1018,11 @@
 
   function renderAll() {
     const summary = computeSummary(appState);
+    const initialized = ensureOverviewSeriesInitialized(summary);
+    if (initialized) {
+      appState = saveState(appState);
+      writeStateToConnectedFile();
+    }
     const todaySummary = computeTodaySummary(summary);
 
     renderDashboard(summary, todaySummary);
@@ -932,15 +1261,12 @@
     const holdings = summary.holdings || [];
     if (!holdings.length) {
       showSaveStatus("暂无持仓，无法自动获取现价");
+      setQuoteStatus("暂无持仓，无法刷新股价");
       return;
     }
 
-    const button = byId("price-refresh-all-btn");
-    const originalText = button?.textContent || "自动获取全部现价";
-    if (button) {
-      button.disabled = true;
-      button.textContent = "获取中...";
-    }
+    setRefreshAllButtonBusy(true);
+    setQuoteStatus("正在拉取最新股价...");
 
     if (!appState.prices || typeof appState.prices !== "object") appState.prices = {};
 
@@ -963,17 +1289,20 @@
       });
       persistState({
         notice:
-          failed > 0 ? `自动获取完成：成功 ${success} 条，失败 ${failed} 条` : `自动获取完成：成功 ${success} 条`,
+          failed > 0
+            ? `网络刷新完成：成功 ${success} 条，失败 ${failed} 条（失败项沿用本地现价）`
+            : `网络刷新完成：成功 ${success} 条`,
       });
+      setQuoteStatus(
+        failed > 0 ? `网络刷新成功 ${success} 条，失败 ${failed} 条，已保留本地现价` : `网络刷新成功 ${success} 条`
+      );
     } else {
       renderAll();
-      showSaveStatus("自动获取失败：未获取到有效现价");
+      showSaveStatus("网络刷新失败：未获取到有效现价，已保留本地现价");
+      setQuoteStatus("网络刷新失败，当前使用本地现价");
     }
 
-    if (button) {
-      button.disabled = false;
-      button.textContent = originalText;
-    }
+    setRefreshAllButtonBusy(false);
   }
 
   function addAdminNote() {
@@ -1140,19 +1469,34 @@
       applyTrade();
     });
 
-    byId("price-body")?.addEventListener("click", async (event) => {
+    byId("price-card-list")?.addEventListener("click", async (event) => {
       const autoButton = event.target.closest("button.price-auto");
       if (autoButton) {
         const code = normalizeCode(autoButton.dataset.code || "");
         const originalText = autoButton.textContent;
         autoButton.disabled = true;
-        autoButton.textContent = "获取中...";
+        autoButton.textContent = "刷新中...";
 
-        const result = await refreshQuoteForCode(code);
+        const result = await refreshQuoteForCode(code, { silent: true });
         if (result.ok) {
-          const row = autoButton.closest("tr");
-          const input = row?.querySelector("input.price-input");
+          const card = byId("price-card-list")?.querySelector(`.price-card[data-code="${code}"]`);
+          const input = card?.querySelector("input.price-input");
+          const tip = card?.querySelector(".price-card-tip");
           if (input) input.value = String(result.quote.price);
+          if (tip) {
+            tip.textContent = `网络刷新成功，现价 ${formatCurrency(result.quote.price)}`;
+            tip.classList.remove("fallback");
+          }
+          setQuoteStatus(`${code} 网络刷新成功`);
+        } else {
+          const card = autoButton.closest(".price-card");
+          const tip = card?.querySelector(".price-card-tip");
+          if (tip) {
+            tip.textContent = "网络获取失败，已保留本地现价";
+            tip.classList.add("fallback");
+          }
+          showSaveStatus(`${code} 网络获取失败，已保留本地现价`);
+          setQuoteStatus(`${code} 网络失败，使用本地现价`);
         }
 
         autoButton.disabled = false;
@@ -1163,10 +1507,16 @@
       const saveButton = event.target.closest("button.price-save");
       if (!saveButton) return;
       const code = normalizeCode(saveButton.dataset.code || "");
-      const row = saveButton.closest("tr");
-      const input = row?.querySelector("input.price-input");
+      const card = saveButton.closest(".price-card");
+      const input = card?.querySelector("input.price-input");
+      const tip = card?.querySelector(".price-card-tip");
       const price = number(input?.value);
-      applyPriceUpdate(code, price, { source: "手动" });
+      applyPriceUpdate(code, price, { source: "本地" });
+      if (tip) {
+        tip.textContent = `本地现价已保存：${formatCurrency(price)}`;
+        tip.classList.remove("fallback");
+      }
+      setQuoteStatus(`${code} 本地现价已保存`);
     });
 
     byId("price-refresh-all-btn")?.addEventListener("click", () => {
@@ -1216,7 +1566,16 @@
     byId("trade-type")?.addEventListener("change", renderAll);
   }
 
+  function bindDashboardEvents() {
+    if (!byId("dashboard-page")) return;
+
+    byId("price-refresh-all-btn")?.addEventListener("click", () => {
+      refreshAllQuotes();
+    });
+  }
+
   function init() {
+    bindDashboardEvents();
     bindOperationEvents();
     renderAll();
 

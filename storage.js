@@ -109,6 +109,24 @@
     return output;
   }
 
+  function normalizeOverviewSeries(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    return source
+      .map((item) => {
+        const row = item && typeof item === "object" ? item : {};
+        const at = String(row.at || "").trim() || new Date().toISOString();
+        return {
+          at,
+          totalAsset: number(row.totalAsset),
+          nav: Math.max(0, number(row.nav)),
+          totalProfit: number(row.totalProfit),
+        };
+      })
+      .filter((row) => !Number.isNaN(new Date(row.at).getTime()))
+      .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
+      .slice(-1200);
+  }
+
   function createEmptyState() {
     return {
       schemaVersion: 1,
@@ -120,6 +138,7 @@
       notes: [],
       logs: [],
       dailyBaselines: {},
+      overviewSeries: [],
       updatedAt: new Date().toISOString(),
     };
   }
@@ -193,6 +212,7 @@
 
     const prices = normalizePriceMap(source.prices);
     const dailyBaselines = normalizeDailyBaselines(source.dailyBaselines, uniqueMembers);
+    const overviewSeries = normalizeOverviewSeries(source.overviewSeries);
 
     return {
       ...defaults,
@@ -205,6 +225,7 @@
       notes,
       logs,
       dailyBaselines,
+      overviewSeries,
       updatedAt: source.updatedAt || defaults.updatedAt,
     };
   }

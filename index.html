@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>股票基金账本 - 展示页</title>
+    <title>投资账本｜收益看板</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Outfit:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Outfit:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -18,11 +19,11 @@
       <header class="hero reveal delay-1">
         <div>
           <p class="eyebrow">Equity Fund Ledger</p>
-          <h1>股票基金账本（展示页）</h1>
-          <p class="subtitle">按份额展示总资产、总收益、每位成员总收益与当日收益（含入金/出金影响）。</p>
+          <h1>投资收益看板</h1>
+          <p class="subtitle">总资产、收益表现与成员分配</p>
         </div>
         <div class="hero-tools">
-          <a class="link-btn" href="./operation.html">前往操作页</a>
+          <a class="link-btn" href="./operation.html">管理入口</a>
           <div class="stamp">
             <span>最后更新</span>
             <strong id="dash-updated-at">-</strong>
@@ -36,30 +37,68 @@
           <h2 id="dash-total-asset">¥0.00</h2>
           <p class="hint" id="dash-nav">基金净值：1.00000000</p>
           <p class="hint" id="dash-total-shares">总份额：0.00000000</p>
-          <div class="split-lines">
-            <p id="dash-total-invested">累计净入金：¥0.00</p>
-            <p id="dash-total-subscribed">累计入金：¥0.00</p>
-            <p id="dash-total-withdrawn">累计出金：¥0.00</p>
-            <p id="dash-cash">账户现金：¥0.00</p>
-            <p id="dash-holding-market">股票市值：¥0.00</p>
+          <div class="overview-curve-block">
+            <div class="overview-curve-head">
+              <p>净值趋势</p>
+              <strong id="dash-overview-nav-change">区间变化：—</strong>
+            </div>
+            <div class="overview-curve-shell">
+              <svg id="dash-overview-curve" viewBox="0 0 420 150" preserveAspectRatio="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id="dash-overview-area-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stop-color="rgba(20,84,212,0.28)" />
+                    <stop offset="100%" stop-color="rgba(20,84,212,0.02)" />
+                  </linearGradient>
+                  <linearGradient id="dash-overview-line-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#1e66e2" />
+                    <stop offset="100%" stop-color="#d15d1c" />
+                  </linearGradient>
+                </defs>
+                <path id="dash-overview-curve-area"></path>
+                <path id="dash-overview-curve-line"></path>
+              </svg>
+              <p id="dash-overview-curve-empty" class="overview-curve-empty hidden">暂无趋势</p>
+            </div>
+            <div class="overview-curve-meta">
+              <p id="dash-overview-start-nav">起始净值：—</p>
+              <p id="dash-overview-end-nav">当前净值：—</p>
+              <p id="dash-overview-point-count">历史点数：0</p>
+            </div>
           </div>
-          <p id="dash-empty-tip" class="hint">
-            当前无数据，请前往操作页先新增成员并记录首笔入金。
-          </p>
+          <p id="dash-empty-tip" class="hint">暂无可展示数据</p>
         </article>
 
         <div class="profit-stack">
           <article class="card profit-card reveal delay-3">
-            <p class="label">累计总收益</p>
+            <div class="profit-card-head">
+              <p class="label">累计总收益</p>
+              <p id="dash-total-profit-badge" class="profit-badge">收益率 —</p>
+            </div>
             <h2 id="dash-total-profit">¥0.00</h2>
-            <p class="hint">口径：当前总资产 - 累计净入金</p>
+            <p class="hint" id="dash-total-profit-sub">截至当前</p>
+            <div class="profit-card-bar">
+              <span id="dash-total-profit-bar"></span>
+            </div>
+            <div class="profit-card-metrics">
+              <p>累计净入金 <strong id="dash-total-profit-invested">¥0.00</strong></p>
+              <p>总收益率 <strong id="dash-total-profit-rate">—</strong></p>
+            </div>
           </article>
 
           <article class="card today-card reveal delay-4">
-            <p class="label">当日收益</p>
+            <div class="profit-card-head">
+              <p class="label">当日收益</p>
+              <p id="dash-today-profit-badge" class="profit-badge">当日基线 —</p>
+            </div>
             <h2 id="dash-today-profit">¥0.00</h2>
             <p class="hint" id="dash-today-rate">今日收益率：0.00%</p>
-            <p class="hint" id="dash-today-base">当日基线总资产：¥0.00</p>
+            <div class="profit-card-bar">
+              <span id="dash-today-profit-bar"></span>
+            </div>
+            <div class="profit-card-metrics">
+              <p>当日基线资产 <strong id="dash-today-base-asset">¥0.00</strong></p>
+              <p>占累计收益 <strong id="dash-today-share-of-total">—</strong></p>
+            </div>
           </article>
         </div>
       </section>
@@ -67,69 +106,42 @@
       <section class="card reveal delay-5">
         <div class="section-head">
           <h3>成员收益分配</h3>
-          <p>按入金时间对应购买份额，按份额计算各成员当前资产、总收益、当日收益。</p>
+          <p>成员应得收益与当日收益</p>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>成员</th>
-                <th>累计净入金</th>
-                <th>持有份额</th>
-                <th>份额占比</th>
-                <th>当前资产</th>
-                <th>总收益</th>
-                <th>当日收益</th>
-                <th>今日净入金</th>
-              </tr>
-            </thead>
-            <tbody id="dash-member-body"></tbody>
-          </table>
-        </div>
+        <div id="dash-member-cards" class="member-cards"></div>
       </section>
 
       <section class="card reveal delay-6">
         <div class="section-head">
-          <h3>当前股票持仓</h3>
-          <p>持仓由交易记录自动汇总，收益按当前价格实时计算。</p>
+          <div class="section-head-inline">
+            <h3>当前股票持仓</h3>
+            <button id="price-refresh-all-btn" type="button" class="ghost section-action-btn icon-only" aria-label="刷新股价" title="刷新股价">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+                <path d="M20 4v6h-6" />
+              </svg>
+            </button>
+          </div>
+          <p>实时持仓与浮动盈亏</p>
+          <p id="dash-holdings-status" class="section-status">点击右上角图标刷新最新股价</p>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>数量</th>
-                <th>成本价</th>
-                <th>现价</th>
-                <th>持仓成本</th>
-                <th>持仓市值</th>
-                <th>浮动收益</th>
-              </tr>
-            </thead>
-            <tbody id="dash-holdings-body"></tbody>
-          </table>
-        </div>
+        <div id="dash-holdings-list" class="dash-holding-list"></div>
       </section>
 
       <section class="card reveal delay-7">
         <div class="section-head">
-          <h3>最近操作历史</h3>
-          <p>展示最近关键操作，完整记录请前往操作页。</p>
+          <h3>资金结构</h3>
+          <p>账户资金与仓位结构</p>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>类型</th>
-                <th>详情</th>
-              </tr>
-            </thead>
-            <tbody id="dash-log-body"></tbody>
-          </table>
+        <div class="fund-meta-grid">
+          <p id="dash-total-invested">累计净入金：¥0.00</p>
+          <p id="dash-total-subscribed">累计入金：¥0.00</p>
+          <p id="dash-total-withdrawn">累计出金：¥0.00</p>
+          <p id="dash-cash">账户现金：¥0.00</p>
+          <p id="dash-holding-market">股票市值：¥0.00</p>
         </div>
       </section>
+
     </main>
 
     <script src="./storage.js"></script>

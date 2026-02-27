@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>股票基金账本 - 操作页</title>
+    <title>投资账本｜账户管理</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Outfit:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Outfit:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -17,12 +18,12 @@
     <main class="page" id="operation-page">
       <header class="hero reveal delay-1">
         <div>
-          <p class="eyebrow">Equity Fund Ledger</p>
-          <h1>股票基金账本（操作页）</h1>
-          <p class="subtitle">记录成员入金/出金、股票交易、价格更新与管理员备注，收益按份额自动分配。</p>
+          <p class="eyebrow">Investment Operations</p>
+          <h1>投资账户管理</h1>
+          <p class="subtitle">资金流、交易与行情维护</p>
         </div>
         <div class="hero-tools">
-          <a class="link-btn" href="./index.html">返回展示页</a>
+          <a class="link-btn" href="./index.html">返回看板</a>
           <div class="stamp">
             <span>本地保存状态</span>
             <strong id="save-status">已加载本地数据</strong>
@@ -30,115 +31,166 @@
         </div>
       </header>
 
-      <section class="grid-2">
-        <article class="card reveal delay-2">
-          <p class="label">当前概览</p>
-          <div class="split-lines">
-            <p id="op-total-asset">总资产：¥0.00</p>
-            <p id="op-nav">基金净值：1.00000000</p>
-            <p id="op-total-invested">累计净入金：¥0.00</p>
-            <p id="op-total-subscribed">累计入金：¥0.00</p>
-            <p id="op-total-withdrawn">累计出金：¥0.00</p>
-            <p id="op-holding-market">股票市值：¥0.00</p>
-            <p id="op-cash">账户现金：¥0.00</p>
-            <p id="op-total-profit">累计总收益：¥0.00</p>
-            <p id="op-today-total">当日总收益：¥0.00</p>
-            <p id="op-today-rate">今日收益率：0.00%</p>
-            <p id="op-updated-at">更新时间：-</p>
-          </div>
-          <p id="op-overview-tip" class="hint">
-            当前是空账本。请按顺序：新增成员 → 记录入金 → 记录交易 → 更新现价。
-          </p>
-        </article>
+      <section class="grid-2 operation-top-grid">
+        <div class="stack-col operation-main-stack">
+          <article class="card reveal delay-2 op-overview-card">
+            <p class="label">账户概览</p>
+            <div class="op-overview-grid">
+              <div class="op-overview-item op-overview-item-main tone-core">
+                <span>总资产</span>
+                <strong id="op-total-asset">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-profit">
+                <span>累计总收益</span>
+                <strong id="op-total-profit">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-day">
+                <span>当日收益</span>
+                <strong id="op-today-total">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-day-rate">
+                <span>今日收益率</span>
+                <strong id="op-today-rate">0.00%</strong>
+              </div>
+              <div class="op-overview-item tone-nav">
+                <span>基金净值</span>
+                <strong id="op-nav">1.00000000</strong>
+              </div>
+              <div class="op-overview-item tone-flow">
+                <span>累计净入金</span>
+                <strong id="op-total-invested">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-in">
+                <span>累计入金</span>
+                <strong id="op-total-subscribed">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-out">
+                <span>累计出金</span>
+                <strong id="op-total-withdrawn">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-stock">
+                <span>股票市值</span>
+                <strong id="op-holding-market">¥0.00</strong>
+              </div>
+              <div class="op-overview-item tone-cash">
+                <span>账户现金</span>
+                <strong id="op-cash">¥0.00</strong>
+              </div>
+              <div class="op-overview-updated">
+                <span>更新时间</span>
+                <strong id="op-updated-at">-</strong>
+              </div>
+            </div>
+            <div class="op-asset-structure">
+              <div class="op-asset-bar">
+                <span id="op-stock-seg" class="op-asset-seg-stock"></span>
+                <span id="op-cash-seg" class="op-asset-seg-cash"></span>
+              </div>
+              <div class="op-asset-legend">
+                <p>股票占比 <strong id="op-stock-ratio">0.00%</strong></p>
+                <p>现金占比 <strong id="op-cash-ratio">0.00%</strong></p>
+                <p>区间变化 <strong id="op-mini-curve-change">—</strong></p>
+              </div>
+            </div>
+            <div class="op-mini-curve-shell">
+              <svg id="op-mini-curve" viewBox="0 0 340 96" preserveAspectRatio="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id="op-mini-area-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stop-color="#1454d4" stop-opacity="0.3"></stop>
+                    <stop offset="100%" stop-color="#1454d4" stop-opacity="0.02"></stop>
+                  </linearGradient>
+                  <linearGradient id="op-mini-line-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#1454d4"></stop>
+                    <stop offset="100%" stop-color="#17a36a"></stop>
+                  </linearGradient>
+                </defs>
+                <path id="op-mini-curve-area"></path>
+                <path id="op-mini-curve-line"></path>
+              </svg>
+              <p id="op-mini-curve-empty" class="op-mini-curve-empty">暂无资产轨迹</p>
+            </div>
+            <p id="op-overview-tip" class="hint">当前无有效记录</p>
+          </article>
 
-        <article class="card reveal delay-3">
-          <div class="section-head">
-            <h3>本地文件管理（无云端）</h3>
-            <p>可连接单个本地 JSON 文件，作为你的账本持久化文件。</p>
-          </div>
-          <div class="actions">
-            <button id="file-connect-btn" type="button">连接本地文件</button>
-            <button id="file-load-btn" type="button" class="ghost">从连接文件刷新</button>
-            <button id="file-save-btn" type="button" class="ghost">保存到连接文件</button>
-            <button id="file-save-as-btn" type="button" class="ghost">另存为文件</button>
-            <button id="file-export-btn" type="button" class="ghost">导出 JSON</button>
-            <button id="file-import-btn" type="button" class="ghost">导入 JSON</button>
-            <input id="file-import-input" type="file" accept="application/json,.json" class="hidden" />
-          </div>
-          <p id="file-status" class="status">当前模式：本地存储</p>
-          <div class="actions">
-            <button id="clear-all-btn" type="button" class="remove">清空全部数据</button>
-          </div>
-        </article>
-      </section>
-
-      <section class="card reveal delay-4">
-        <div class="section-head">
-          <h3>成员份额与收益</h3>
-          <p>每次入金按当时净值购买份额，收益按份额变化自动计算。</p>
+          <section class="card reveal delay-4 fund-flow-card">
+            <div class="section-head">
+              <h3>资金操作</h3>
+              <p>入金与出金记录</p>
+            </div>
+            <form id="fund-flow-form">
+              <div class="editor-grid">
+                <label>
+                  操作方向
+                  <select id="fund-flow-direction">
+                    <option value="in">入金</option>
+                    <option value="out">出金</option>
+                  </select>
+                </label>
+                <label>
+                  成员
+                  <select id="fund-flow-member"></select>
+                </label>
+                <label>
+                  金额（¥）
+                  <input id="fund-flow-amount" type="number" min="0" step="0.01" placeholder="0.00" />
+                </label>
+                <label>
+                  备注
+                  <input id="fund-flow-note" type="text" placeholder="备注" />
+                </label>
+              </div>
+              <div class="actions">
+                <button id="fund-flow-submit" type="submit">提交</button>
+              </div>
+              <p id="fund-flow-preview" class="hint">按当前净值自动折算份额</p>
+            </form>
+          </section>
         </div>
 
-        <div class="actions" style="margin-bottom: 12px">
-          <input id="new-member-name" type="text" placeholder="输入新成员名称" />
-          <button id="add-member-btn" type="button">新增成员</button>
-        </div>
+        <div class="stack-col operation-side-stack">
+          <article class="card reveal delay-3 data-manage-card">
+            <div class="section-head">
+              <h3>数据管理</h3>
+              <p>本地文件连接与备份</p>
+            </div>
+            <div class="actions">
+              <button id="file-connect-btn" type="button">连接文件</button>
+              <button id="file-load-btn" type="button" class="ghost">刷新</button>
+              <button id="file-save-btn" type="button" class="ghost">保存</button>
+              <button id="file-save-as-btn" type="button" class="ghost">另存</button>
+              <button id="file-export-btn" type="button" class="ghost">导出 JSON</button>
+              <button id="file-import-btn" type="button" class="ghost">导入 JSON</button>
+              <input id="file-import-input" type="file" accept="application/json,.json" class="hidden" />
+            </div>
+            <p id="file-status" class="status">当前模式：本地存储</p>
+            <div class="actions">
+              <button id="clear-all-btn" type="button" class="remove">清空全部数据</button>
+            </div>
+          </article>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>成员</th>
-                <th>累计净入金</th>
-                <th>持有份额</th>
-                <th>当前资产</th>
-                <th>总收益</th>
-                <th>当日收益</th>
-                <th>今日净入金</th>
-              </tr>
-            </thead>
-            <tbody id="member-body"></tbody>
-          </table>
-        </div>
-      </section>
+          <section class="card reveal delay-5 member-share-card">
+            <div class="section-head">
+              <h3>成员份额</h3>
+              <p>份额、资产与收益</p>
+            </div>
 
-      <section class="card reveal delay-5">
-        <div class="section-head">
-          <h3>成员资金操作（入金 / 出金）</h3>
-          <p>统一记录资金进出：入金按净值购买份额，出金按净值赎回份额。</p>
+            <div class="member-add-shell">
+              <label class="member-add-field" for="new-member-name">
+                <span class="member-add-dot" aria-hidden="true"></span>
+                <input id="new-member-name" type="text" placeholder="输入成员姓名" />
+              </label>
+              <button id="add-member-btn" type="button">添加成员</button>
+            </div>
+
+            <div id="member-share-list" class="member-share-list"></div>
+          </section>
         </div>
-        <form id="fund-flow-form">
-          <div class="editor-grid">
-            <label>
-              操作方向
-              <select id="fund-flow-direction">
-                <option value="in">入金（购买份额）</option>
-                <option value="out">出金（赎回份额）</option>
-              </select>
-            </label>
-            <label>
-              成员
-              <select id="fund-flow-member"></select>
-            </label>
-            <label>
-              金额 (RMB)
-              <input id="fund-flow-amount" type="number" min="0" step="0.01" placeholder="0.00" />
-            </label>
-            <label>
-              备注
-              <input id="fund-flow-note" type="text" placeholder="可选说明" />
-            </label>
-          </div>
-          <div class="actions">
-            <button id="fund-flow-submit" type="submit">记录资金操作</button>
-          </div>
-          <p id="fund-flow-preview" class="hint">本次操作将按当前净值折算份额变化。</p>
-        </form>
       </section>
 
       <section class="card reveal delay-6">
         <div class="section-head">
-          <h3>股票交易记录</h3>
-          <p>管理员记录买卖操作；可标记资金来源成员（仅作为记录，不改变份额分配规则）。</p>
+          <h3>股票交易</h3>
+          <p>买入与卖出记录</p>
         </div>
         <form id="trade-form">
           <div class="editor-grid">
@@ -155,7 +207,7 @@
             </label>
             <label>
               股票名称
-              <input id="trade-name" type="text" placeholder="浦发银行" />
+              <input id="trade-name" type="text" placeholder="股票名称" />
             </label>
             <label>
               成交价格
@@ -166,75 +218,39 @@
               <input id="trade-quantity" type="number" min="0" step="1" placeholder="0" />
             </label>
             <label>
-              资金来源记录
+              资金来源
               <select id="trade-source-member">
                 <option value="pool">统一资金池</option>
               </select>
             </label>
             <label>
               备注
-              <input id="trade-note" type="text" placeholder="可选说明" />
+              <input id="trade-note" type="text" placeholder="备注" />
             </label>
           </div>
           <div class="actions">
-            <button type="submit">记录交易</button>
+            <button type="submit">提交交易</button>
           </div>
-          <p id="trade-preview" class="hint">填写价格和数量后可预览交易金额。</p>
+          <p id="trade-preview" class="hint">成交金额与现金占用预览</p>
         </form>
       </section>
 
       <section class="card reveal delay-7">
         <div class="section-head">
-          <h3>持仓现价维护</h3>
-          <p>支持按代码自动获取实时价，也可手动录入后保存。</p>
+          <h3>现价更新</h3>
+          <p>优先网络拉取，失败时本地兜底</p>
         </div>
         <div class="actions">
-          <button id="price-refresh-all-btn" type="button" class="ghost">自动获取全部现价</button>
+          <button id="price-refresh-all-btn" type="button" class="ghost">网络刷新全部</button>
+          <p id="price-sync-status" class="status-inline">按持仓代码获取最新现价</p>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>数量</th>
-                <th>当前现价</th>
-                <th>新现价</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="price-body"></tbody>
-          </table>
-        </div>
+        <div id="price-card-list" class="price-card-list"></div>
       </section>
 
       <section class="card reveal delay-8">
         <div class="section-head">
-          <h3>成员资金进出历史</h3>
-          <p>用于审计每位成员的入金/出金时间、金额、份额与当时净值。</p>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>成员</th>
-                <th>类型</th>
-                <th>金额</th>
-                <th>净值</th>
-                <th>份额</th>
-                <th>备注</th>
-              </tr>
-            </thead>
-            <tbody id="sub-history-body"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="card reveal delay-9">
-        <div class="section-head">
           <h3>股票交易历史</h3>
-          <p>记录管理员所有买卖操作与备注，便于复盘。</p>
+          <p>交易明细与备注</p>
         </div>
         <div class="table-wrap">
           <table>
@@ -256,24 +272,46 @@
         </div>
       </section>
 
-      <section class="card reveal delay-10">
+      <section class="card reveal delay-9">
         <div class="section-head">
-          <h3>管理员操作备注</h3>
-          <p>记录交易原因、策略变化等关键文字信息。</p>
+          <h3>资金记录</h3>
+          <p>入金与出金明细</p>
         </div>
-        <form id="note-form">
-          <div class="editor-grid">
-            <label>
-              备注内容
-              <textarea id="admin-note" rows="3" placeholder="输入本次管理操作的备注..."></textarea>
-            </label>
-          </div>
-          <div class="actions">
-            <button type="submit">保存备注</button>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>成员</th>
+                <th>类型</th>
+                <th>金额</th>
+                <th>净值</th>
+                <th>份额</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="sub-history-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card reveal delay-10 note-card">
+        <div class="section-head">
+          <h3>管理备注</h3>
+          <p>策略与执行记录</p>
+        </div>
+        <form id="note-form" class="note-form">
+          <label class="note-label" for="admin-note">备注内容</label>
+          <div class="note-editor">
+            <textarea id="admin-note" rows="4" placeholder="输入本次策略、执行要点或风险说明"></textarea>
+            <div class="note-editor-foot">
+              <p class="note-tip">保存后将自动记录当前时间</p>
+              <button type="submit">保存备注</button>
+            </div>
           </div>
         </form>
 
-        <div class="table-wrap">
+        <div class="table-wrap note-table-wrap">
           <table>
             <thead>
               <tr>
@@ -288,8 +326,8 @@
 
       <section class="card reveal delay-11">
         <div class="section-head">
-          <h3>系统操作历史</h3>
-          <p>按时间记录成员入金/出金、交易、价格更新等系统事件。</p>
+          <h3>近期操作记录</h3>
+          <p>最近更新与关键变动</p>
         </div>
         <div class="table-wrap">
           <table>

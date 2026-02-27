@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="投资看板图标">
+  <rect width="64" height="64" rx="16" fill="#f4f7fb"/>
+  <rect x="13" y="34" width="8" height="16" rx="3" fill="#7c8da1"/>
+  <rect x="27" y="24" width="8" height="26" rx="3" fill="#376fd6"/>
+  <rect x="41" y="15" width="8" height="35" rx="3" fill="#1d8a55"/>
+  <path d="M12 39C18 35 23 34 29 29C34 25 39 19 52 14" fill="none" stroke="#c75b2d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="52" cy="14" r="4" fill="#c75b2d"/>
+</svg>
