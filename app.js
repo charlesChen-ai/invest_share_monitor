@@ -23,6 +23,8 @@
   const FILE_HANDLE_DB_NAME = "equity_fund_file_handle_db";
   const FILE_HANDLE_STORE_NAME = "handles";
   const FILE_HANDLE_RECORD_KEY = "connected_file";
+  const SIBLING_LEDGER_PATH = "./ledger.json";
+  const LOCAL_BACKUP_KEY = "equity_fund_local_backup_latest";
 
   function byId(id) {
     return document.getElementById(id);
@@ -63,6 +65,202 @@
       hour: "2-digit",
       minute: "2-digit",
     });
+  }
+
+  function parseTimeMs(value) {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function isStateMeaningful(state) {
+    const summary = computeSummary(state);
+    return !isEmptyLedger(summary);
+  }
+
+  function pickMemberName(primary, fallback) {
+    const p = String(primary || "").trim();
+    const f = String(fallback || "").trim();
+    if (!p) return f;
+    if (!f) return p;
+    const pGeneric = /^成员\d+$/u.test(p);
+    const fGeneric = /^成员\d+$/u.test(f);
+    if (pGeneric && !fGeneric) return f;
+    return p;
+  }
+
+  function mergeMembers(baseMembers, incomingMembers) {
+    const output = [];
+    const byId = new Map();
+
+    const upsert = (member) => {
+      const id = String(member?.id || "").trim();
+      if (!id) return;
+      const existing = byId.get(id);
+      if (!existing) {
+        const row = { id, name: String(member?.name || "").trim() };
+        byId.set(id, row);
+        output.push(row);
+        return;
+      }
+      existing.name = pickMemberName(existing.name, member?.name);
+    };
+
+    (Array.isArray(baseMembers) ? baseMembers : []).forEach(upsert);
+    (Array.isArray(incomingMembers) ? incomingMembers : []).forEach(upsert);
+    return output;
+  }
+
+  function mergeRowsById(baseRows, incomingRows) {
+    const map = new Map();
+    const output = [];
+
+    const pushRow = (row) => {
+      const item = row && typeof row === "object" ? { ...row } : null;
+      if (!item) return;
+      const id = String(item.id || "").trim();
+      if (!id) {
+        output.push(item);
+        return;
+      }
+      if (!map.has(id)) {
+        map.set(id, item);
+        output.push(item);
+      } else {
+        const index = output.findIndex((r) => String(r?.id || "").trim() === id);
+        if (index >= 0) output[index] = item;
+        map.set(id, item);
+      }
+    };
+
+    (Array.isArray(baseRows) ? baseRows : []).forEach(pushRow);
+    (Array.isArray(incomingRows) ? incomingRows : []).forEach(pushRow);
+    return output;
+  }
+
+  function mergePriceMap(basePrices, incomingPrices) {
+    return {
+      ...(basePrices && typeof basePrices === "object" ? basePrices : {}),
+      ...(incomingPrices && typeof incomingPrices === "object" ? incomingPrices : {}),
+    };
+  }
+
+  function mergeDailyBaselines(baseMap, incomingMap) {
+    const output = {};
+    const keys = new Set([
+      ...Object.keys(baseMap && typeof baseMap === "object" ? baseMap : {}),
+      ...Object.keys(incomingMap && typeof incomingMap === "object" ? incomingMap : {}),
+    ]);
+
+    keys.forEach((key) => {
+      const base = baseMap?.[key] && typeof baseMap[key] === "object" ? baseMap[key] : {};
+      const incoming = incomingMap?.[key] && typeof incomingMap[key] === "object" ? incomingMap[key] : {};
+      output[key] = {
+        ...base,
+        ...incoming,
+        memberAssets: {
+          ...(base.memberAssets && typeof base.memberAssets === "object" ? base.memberAssets : {}),
+          ...(incoming.memberAssets && typeof incoming.memberAssets === "object" ? incoming.memberAssets : {}),
+        },
+        memberInvested: {
+          ...(base.memberInvested && typeof base.memberInvested === "object" ? base.memberInvested : {}),
+          ...(incoming.memberInvested && typeof incoming.memberInvested === "object" ? incoming.memberInvested : {}),
+        },
+      };
+    });
+
+    return output;
+  }
+
+  function mergeOverviewSeries(baseSeries, incomingSeries) {
+    const rows = [
+      ...(Array.isArray(baseSeries) ? baseSeries : []),
+      ...(Array.isArray(incomingSeries) ? incomingSeries : []),
+    ];
+    const seen = new Set();
+    const unique = [];
+    rows.forEach((row) => {
+      const at = String(row?.at || "").trim();
+      const key = `${at}|${number(row?.totalAsset)}|${number(row?.nav)}|${number(row?.totalProfit)}`;
+      if (!at || seen.has(key)) return;
+      seen.add(key);
+      unique.push(row);
+    });
+    return unique.sort((a, b) => parseTimeMs(a?.at) - parseTimeMs(b?.at)).slice(-1200);
+  }
+
+  function mergeStatesPreservingData(localState, siblingState) {
+    const local = normalizeState(localState);
+    const sibling = normalizeState(siblingState);
+
+    const merged = normalizeState({
+      schemaVersion: 1,
+      members: mergeMembers(local.members, sibling.members),
+      subscriptions: mergeRowsById(local.subscriptions, sibling.subscriptions),
+      withdrawals: mergeRowsById(local.withdrawals, sibling.withdrawals),
+      trades: mergeRowsById(local.trades, sibling.trades),
+      prices: mergePriceMap(local.prices, sibling.prices),
+      notes: mergeRowsById(local.notes, sibling.notes),
+      logs: mergeRowsById(local.logs, sibling.logs),
+      dailyBaselines: mergeDailyBaselines(local.dailyBaselines, sibling.dailyBaselines),
+      overviewSeries: mergeOverviewSeries(local.overviewSeries, sibling.overviewSeries),
+      updatedAt: parseTimeMs(sibling.updatedAt) >= parseTimeMs(local.updatedAt) ? sibling.updatedAt : local.updatedAt,
+    });
+
+    return merged;
+  }
+
+  function backupLocalState(reason = "auto-merge") {
+    try {
+      const backup = {
+        reason,
+        at: new Date().toISOString(),
+        state: normalizeState(appState),
+      };
+      localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(backup));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function loadSiblingLedgerFile() {
+    if (typeof fetch !== "function") {
+      return { ok: false, reason: "fetch-unavailable" };
+    }
+
+    try {
+      const response = await fetch(SIBLING_LEDGER_PATH, { cache: "no-store" });
+      if (!response.ok) return { ok: false, reason: `http-${response.status}` };
+      const text = await response.text();
+      if (!String(text || "").trim()) return { ok: false, reason: "empty-file" };
+      const parsed = normalizeState(JSON.parse(text));
+      return { ok: true, state: parsed };
+    } catch (error) {
+      return { ok: false, reason: String(error?.name || "fetch-error") };
+    }
+  }
+
+  async function autoLoadSiblingLedgerOnInit({ silent = false } = {}) {
+    const result = await loadSiblingLedgerFile();
+    if (!result.ok || !result.state) return { loaded: false, reason: result.reason || "unavailable" };
+
+    const siblingHasData = isStateMeaningful(result.state);
+    const localHasData = isStateMeaningful(appState);
+
+    if (!siblingHasData && !localHasData) return { loaded: false, reason: "both-empty" };
+
+    if (localHasData) {
+      backupLocalState("before-sibling-ledger-merge");
+    }
+
+    appState = mergeStatesPreservingData(appState, result.state);
+    appState = saveState(appState);
+
+    if (!silent) {
+      showSaveStatus("已自动读取同级 ledger.json 并合并本地数据");
+    }
+
+    return { loaded: true, merged: localHasData, siblingHasData };
   }
 
   function toTencentSymbol(rawCode) {
@@ -2071,11 +2269,16 @@
     bindOperationEvents();
 
     const operationPage = Boolean(byId("operation-page"));
+    const siblingLoaded = await autoLoadSiblingLedgerOnInit({ silent: true });
     let autoLinked = false;
 
     if (operationPage) {
-      setFileStatus("正在检查已连接文件...");
-      autoLinked = await restoreConnectedFileOnInit();
+      if (siblingLoaded.loaded) {
+        setFileStatus("已自动读取同级 ledger.json（如需改用其他文件，可手动连接）");
+      } else {
+        setFileStatus("正在检查已连接文件...");
+        autoLinked = await restoreConnectedFileOnInit();
+      }
     }
 
     renderAll();
@@ -2083,9 +2286,15 @@
 
     if (operationPage) {
       if (!autoLinked && !fileHandle) {
-        setFileStatus("当前模式：本地存储（可连接/导入 JSON 文件）");
+        if (!siblingLoaded.loaded) {
+          setFileStatus("当前模式：本地存储（可连接/导入 JSON 文件）");
+        }
       }
-      showSaveStatus(autoLinked ? "已自动加载连接文件数据" : "已加载本地数据");
+      if (siblingLoaded.loaded) {
+        showSaveStatus("已自动加载同级 ledger.json");
+      } else {
+        showSaveStatus(autoLinked ? "已自动加载连接文件数据" : "已加载本地数据");
+      }
     }
   }
 
