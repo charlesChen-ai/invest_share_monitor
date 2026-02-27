@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>最终功能测试</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .test-result { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .pass { background: #d4edda; }
+        .fail { background: #f8d7da; }
+        .running { background: #fff3cd; }
+        button { margin: 5px; padding: 8px 16px; }
+    </style>
+</head>
+<body>
+    <h1>交易优化器最终测试</h1>
+    
+    <div id="test-results">
+        <div class="test-result running">测试准备中...</div>
+    </div>
+    
+    <div style="margin-top: 30px;">
+        <h3>手动测试链接：</h3>
+        <p><a href="operation.html" target="_blank">打开操作页面进行完整测试</a></p>
+        <p>测试步骤：</p>
+        <ol>
+            <li>打开操作页面</li>
+            <li>检查交易面板是否正常显示</li>
+            <li>尝试输入股票代码（如：600519）</li>
+            <li>测试买入/卖出切换</li>
+            <li>输入价格和数量，查看实时验证</li>
+            <li>按F12查看控制台是否有错误</li>
+        </ol>
+    </div>
+    
+    <script>
+        // 测试脚本加载
+        const tests = [
+            { name: '加载storage.js', file: 'storage.js' },
+            { name: '加载ledger-core.js', file: 'ledger-core.js' },
+            { name: '加载trade-optimizer.js', file: 'trade-optimizer.js' },
+            { name: '加载app.js', file: 'app.js' }
+        ];
+        
+        const resultsDiv = document.getElementById('test-results');
+        let currentTest = 0;
+        
+        function runTest(index) {
+            if (index >= tests.length) {
+                // 所有文件加载测试完成
+                testGlobalObjects();
+                return;
+            }
+            
+            const test = tests[index];
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'test-result running';
+            resultDiv.textContent = `测试中: ${test.name}`;
+            resultsDiv.appendChild(resultDiv);
+            
+            // 动态加载脚本
+            const script = document.createElement('script');
+            script.src = test.file;
+            script.onload = () => {
+                resultDiv.className = 'test-result pass';
+                resultDiv.textContent = `✅ ${test.name} 加载成功`;
+                currentTest++;
+                setTimeout(() => runTest(currentTest), 100);
+            };
+            script.onerror = () => {
+                resultDiv.className = 'test-result fail';
+                resultDiv.textContent = `❌ ${test.name} 加载失败`;
+                currentTest++;
+                setTimeout(() => runTest(currentTest), 100);
+            };
+            
+            document.head.appendChild(script);
+        }
+        
+        function testGlobalObjects() {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'test-result running';
+            resultDiv.textContent = '测试全局对象...';
+            resultsDiv.appendChild(resultDiv);
+            
+            setTimeout(() => {
+                const objects = [
+                    { name: 'LedgerStorage', obj: window.LedgerStorage },
+                    { name: 'LedgerCore', obj: window.LedgerCore },
+                    { name: 'TradeOptimizer', obj: window.TradeOptimizer }
+                ];
+                
+                let allExist = true;
+                let message = '全局对象检查：<br>';
+                
+                objects.forEach(({ name, obj }) => {
+                    if (obj && typeof obj === 'object') {
+                        message += `✅ ${name} 存在<br>`;
+                    } else {
+                        message += `❌ ${name} 不存在或不是对象<br>`;
+                        allExist = false;
+                    }
+                });
+                
+                resultDiv.className = allExist ? 'test-result pass' : 'test-result fail';
+                resultDiv.innerHTML = message;
+                
+                // 如果TradeOptimizer存在，测试其方法
+                if (window.TradeOptimizer) {
+                    testTradeOptimizerMethods();
+                }
+            }, 500);
+        }
+        
+        function testTradeOptimizerMethods() {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'test-result running';
+            resultDiv.textContent = '测试TradeOptimizer方法...';
+            resultsDiv.appendChild(resultDiv);
+            
+            setTimeout(() => {
+                const methods = ['init', 'updateState', 'getTradeData', 'validateTradeData', 'clearForm'];
+                let allExist = true;
+                let message = 'TradeOptimizer方法检查：<br>';
+                
+                methods.forEach(method => {
+                    if (typeof window.TradeOptimizer[method] === 'function') {
+                        message += `✅ ${method}() 存在<br>`;
+                    } else {
+                        message += `❌ ${method}() 不存在<br>`;
+                        allExist = false;
+                    }
+                });
+                
+                resultDiv.className = allExist ? 'test-result pass' : 'test-result fail';
+                resultDiv.innerHTML = message;
+                
+                // 最终总结
+                showFinalSummary();
+            }, 500);
+        }
+        
+        function showFinalSummary() {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'test-result';
+            resultDiv.style.background = '#cce5ff';
+            resultDiv.style.marginTop = '20px';
+            resultDiv.style.padding = '15px';
+            
+            resultDiv.innerHTML = `
+                <h3>测试完成！</h3>
+                <p>如果所有测试都通过，说明交易优化器已正确集成。</p>
+                <p>现在可以：</p>
+                <ol>
+                    <li><a href="operation.html" target="_blank">打开操作页面</a>进行实际功能测试</li>
+                    <li>按F12打开控制台，查看是否有错误信息</li>
+                    <li>测试股票搜索、交易验证等功能</li>
+                </ol>
+                <p><strong>注意：</strong>首次打开可能需要一些数据才能显示完整的交易功能。</p>
+            `;
+            
+            resultsDiv.appendChild(resultDiv);
+        }
+        
+        // 开始测试
+        runTest(currentTest);
+    </script>
+</body>
+</html>
